@@ -11,6 +11,18 @@ import { findBookings, isMock, MOCK_ACCOUNTS } from './winscourt.ts';
 
 const app = express();
 app.use(express.json({ limit: '200kb' }));
+
+// Server-Timing: lama proses di aplikasi (ms). Bandingkan dengan TTFB di browser/curl
+// untuk membedakan lambat di aplikasi vs lambat di jaringan (Cloudflare ↔ server).
+app.use((_req, res, next) => {
+  const t0 = performance.now();
+  const writeHead = res.writeHead;
+  res.writeHead = function (this: Response, ...args: Parameters<Response['writeHead']>) {
+    if (!res.headersSent) res.setHeader('Server-Timing', `app;dur=${(performance.now() - t0).toFixed(1)}`);
+    return writeHead.apply(this, args);
+  } as Response['writeHead'];
+  next();
+});
 app.disable('x-powered-by');
 
 /* ---------------- util ---------------- */
@@ -101,25 +113,39 @@ function rateLimit(phone: string) {
 
 /* ---------------- sinkron booking ---------------- */
 
-async function syncBooking(s: Session, host: Host): Promise<boolean> {
-  if (s.status === 'finished' || (s.bookingSyncedAt && Date.now() - s.bookingSyncedAt < 5 * 60_000)) return false;
-  try {
-    const list = await findBookings(host.name, host.phone);
-    const b = list.find((x) => x.id === s.bookingId);
-    s.bookingSyncedAt = Date.now();
-    if (!b) {
-      // Booking lama yang sudah lewat tidak lagi dikembalikan API; hanya tandai batal jika jam main belum lewat.
-      if (new Date(s.end).getTime() > Date.now()) s.bookingCancelled = true;
-    } else {
-      s.bookingCancelled = false;
-      s.start = b.start;
-      s.end = b.end;
-      if (b.courts.length >= s.courts) s.courtNames = courtLabels(s.sport, b.courts.slice(0, s.courts));
-    }
-    return true;
-  } catch {
-    return false;
-  }
+const syncing = new Set<string>();
+
+/**
+ * Sinkron jam main & nomor Line dari Wins Court (maks. tiap 5 menit) di LATAR BELAKANG,
+ * agar halaman sesi tidak menunggu API Wins Court. Perubahan dikirim ke semua HP lewat SSE.
+ */
+function syncBookingInBackground(slug: string, host: Host) {
+  const s0 = sessions.get(slug);
+  if (!s0 || s0.status === 'finished' || syncing.has(slug)) return;
+  if (s0.bookingSyncedAt && Date.now() - s0.bookingSyncedAt < 5 * 60_000) return;
+  syncing.add(slug);
+  findBookings(host.name, host.phone, { fresh: true })
+    .then((list) => {
+      // Muat ulang sesi terbaru: jangan menimpa aksi yang terjadi selama menunggu API.
+      const s = sessions.get(slug);
+      if (!s) return;
+      const b = list.find((x) => x.id === s.bookingId);
+      s.bookingSyncedAt = Date.now();
+      if (!b) {
+        // Booking lama yang sudah lewat tidak lagi dikembalikan API; hanya tandai batal jika jam main belum lewat.
+        if (new Date(s.end).getTime() > Date.now()) s.bookingCancelled = true;
+      } else {
+        s.bookingCancelled = false;
+        s.start = b.start;
+        s.end = b.end;
+        if (b.courts.length >= s.courts) s.courtNames = courtLabels(s.sport, b.courts.slice(0, s.courts));
+      }
+      save(s);
+    })
+    .catch(() => {
+      /* Wins Court tidak bisa dihubungi: coba lagi di kunjungan berikutnya */
+    })
+    .finally(() => syncing.delete(slug));
 }
 
 /* ---------------- routes ---------------- */
@@ -218,13 +244,10 @@ api.post('/sessions', async (req, res) => {
   res.json({ slug: s.slug });
 });
 
-api.get('/s/:slug', async (req, res) => {
+api.get('/s/:slug', (req, res) => {
   const s = loadSession(req.params.slug);
   const role = roleFor(req, s);
-  if (role.host) {
-    const host = hostFrom(req)!;
-    if (await syncBooking(s, host)) save(s);
-  }
+  if (role.host) syncBookingInBackground(s.slug, hostFrom(req)!);
   res.json({ session: publicSession(s, role.host), role: role.host ? 'host' : role.referee ? 'referee' : role.playerId ? 'player' : 'viewer', playerId: role.playerId ?? null });
 });
 

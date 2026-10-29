@@ -64,9 +64,24 @@ const nameMatches = (input: string, booked: string) => {
 
 const clampCourts = (sport: Sport, courts: number[]) => (sport === 'padel' ? [1] : courts.filter((c) => c >= 1 && c <= 4).slice(0, 4));
 
+/** Hasil API Wins Court disimpan sebentar agar beranda/sinkron tidak memanggil API di setiap kunjungan. */
+const CACHE_MS = 60_000;
+const cache = new Map<string, { at: number; list: Booking[] }>();
+
 /** Cari booking milik penyewa untuk hari ini s.d. 7 hari ke depan (plus yang selesai < 12 jam lalu). */
-export async function findBookings(name: string, phone: string): Promise<Booking[]> {
+export async function findBookings(name: string, phone: string, opts: { fresh?: boolean } = {}): Promise<Booking[]> {
   const p = normalizePhone(phone);
+  const key = `${normalizeName(name)}|${p}`;
+  const hit = cache.get(key);
+  if (!opts.fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.list;
+  const list = await fetchBookings(name, p);
+  // Hanya hasil yang ditemukan yang disimpan, supaya booking baru langsung bisa dipakai login.
+  if (list.length) cache.set(key, { at: Date.now(), list });
+  if (cache.size > 2000) cache.delete(cache.keys().next().value!);
+  return list;
+}
+
+async function fetchBookings(name: string, p: string): Promise<Booking[]> {
   let list: Booking[];
   if (API_URL) {
     const res = await fetch(API_URL, {
