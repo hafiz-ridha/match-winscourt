@@ -11,6 +11,18 @@ import { LocalReferee } from './pages/LocalReferee.tsx';
 import { TvBoard } from './pages/TvBoard.tsx';
 import { Join } from './pages/Join.tsx';
 
+// Aplikasi berhasil dimuat: reset penanda muat-ulang dan rapikan ?_r= dari URL (lihat index.html).
+try {
+  sessionStorage.removeItem('mwc.reloaded');
+} catch {
+  /* mode privat */
+}
+if (location.search.includes('_r=')) {
+  const u = new URL(location.href);
+  u.searchParams.delete('_r');
+  history.replaceState(null, '', u.pathname + u.search + u.hash);
+}
+
 function NotFound() {
   return (
     <div className="app">

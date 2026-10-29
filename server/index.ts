@@ -312,8 +312,18 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Tidak ditemukan' }
 
 const dist = resolve('dist');
 if (existsSync(dist)) {
+  // Aset ber-hash (index-abc123.js) tidak pernah berubah isinya → boleh di-cache lama.
+  app.use('/assets', express.static(resolve(dist, 'assets'), { index: false, immutable: true, maxAge: '1y' }));
+  // Aset yang tidak ada (mis. dari halaman versi lama) → 404, JANGAN dibalas index.html:
+  // Safari menolak HTML sebagai JavaScript dan halaman jadi putih kosong.
+  app.use('/assets', (_req, res) => res.status(404).type('text/plain').send('Not found'));
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
-  app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(resolve(dist, 'index.html')));
+  // Rute aplikasi (tanpa ekstensi file) → index.html, selalu dicek ulang agar tidak memakai versi lama.
+  app.get(/^(?!\/api)(?!.*\.[a-z0-9]{1,8}$).*/i, (_req, res) => {
+    res.set('Cache-Control', 'no-cache, must-revalidate');
+    res.sendFile(resolve(dist, 'index.html'));
+  });
+  app.use((_req, res) => res.status(404).type('text/plain').send('Not found'));
 }
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

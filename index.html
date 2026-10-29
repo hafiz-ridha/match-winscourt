@@ -18,6 +18,53 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Jaring pengaman: jika aplikasi gagal dimuat (mis. Safari memakai halaman versi lama),
+      // muat ulang sekali tanpa cache; jika tetap gagal, tampilkan pesan + tombol, bukan layar putih.
+      (function () {
+        var KEY = 'mwc.reloaded';
+        var root = document.getElementById('root');
+        function mounted() {
+          return root && root.childElementCount > 0;
+        }
+        function hardReload() {
+          try {
+            if (sessionStorage.getItem(KEY)) return false;
+            sessionStorage.setItem(KEY, '1');
+          } catch (e) {}
+          var q = location.search ? location.search + '&' : '?';
+          location.replace(location.pathname + q + '_r=' + Date.now() + location.hash);
+          return true;
+        }
+        function fallback(detail) {
+          if (mounted()) return;
+          root.innerHTML =
+            '<div style="max-width:420px;margin:15vh auto;padding:24px;font-family:system-ui,sans-serif;color:#0E1714;text-align:center">' +
+            '<div style="font-size:20px;font-weight:800;margin-bottom:8px">Aplikasi belum termuat</div>' +
+            '<div style="font-size:14px;color:#5D6661;margin-bottom:16px">Periksa koneksi internet, lalu muat ulang halaman.</div>' +
+            '<button onclick="try{sessionStorage.removeItem(\'' + KEY + '\')}catch(e){};location.reload()" ' +
+            'style="border:0;border-radius:999px;background:#C6FF3D;color:#0E1714;font-weight:700;font-size:15px;padding:14px 28px">Muat ulang</button>' +
+            '<div style="font-size:11px;color:#8E948F;margin-top:16px;word-break:break-word">' + (detail || '') + '</div></div>';
+        }
+        window.addEventListener(
+          'error',
+          function (e) {
+            var t = e.target;
+            if (t && t.tagName === 'SCRIPT') {
+              if (!hardReload()) fallback('Script gagal dimuat: ' + (t.src || ''));
+            } else if (!mounted()) {
+              setTimeout(function () {
+                fallback(e.message || 'Error saat memulai aplikasi');
+              }, 1500);
+            }
+          },
+          true
+        );
+        setTimeout(function () {
+          if (!mounted() && !hardReload()) fallback('Waktu memuat habis');
+        }, 10000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
