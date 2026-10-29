@@ -142,20 +142,33 @@ export function useLiveSession(slug: string) {
 
   useEffect(() => {
     reload();
-    const es = new EventSource(`/api/s/${slug}/stream`);
-    es.onmessage = (ev) => {
-      setOnline(true);
-      try {
-        const s = JSON.parse(ev.data) as Session;
-        // Kunci wasit hanya dikirim ke host lewat GET; jangan ditimpa SSE.
-        setSession((prev) => (prev && s.version < latest.current ? prev : { ...s, refKey: prev?.refKey || s.refKey }));
-        latest.current = Math.max(latest.current, s.version);
-      } catch {
-        /* abaikan */
-      }
+    let es: EventSource | null = null;
+    let closed = false;
+    const open = () => {
+      if (closed) return;
+      es = new EventSource(`/api/s/${slug}/stream`);
+      es.onmessage = (ev) => {
+        setOnline(true);
+        try {
+          const s = JSON.parse(ev.data) as Session;
+          // Kunci wasit hanya dikirim ke host lewat GET; jangan ditimpa SSE.
+          setSession((prev) => (prev && s.version < latest.current ? prev : { ...s, refKey: prev?.refKey || s.refKey }));
+          latest.current = Math.max(latest.current, s.version);
+        } catch {
+          /* abaikan */
+        }
+      };
+      es.onerror = () => setOnline(false);
     };
-    es.onerror = () => setOnline(false);
-    return () => es.close();
+    // Safari menganggap halaman "masih memuat" selama koneksi live yang dibuka sebelum event load
+    // masih terbuka (indikator loading tidak selesai). Buka koneksi live setelah halaman selesai dimuat.
+    if (document.readyState === 'complete') open();
+    else window.addEventListener('load', open, { once: true });
+    return () => {
+      closed = true;
+      window.removeEventListener('load', open);
+      es?.close();
+    };
   }, [slug, reload]);
 
   const act = useCallback(

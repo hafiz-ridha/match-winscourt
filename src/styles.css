@@ -39,34 +39,18 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
+/*
+ * Latar seperti wins-court.com: krem #FAFAF7 dengan cahaya lembut lime (atas) dan mint (kanan).
+ * Dibuat dengan gradien radial biasa — BUKAN filter: blur() pada elemen fixed, yang sangat berat
+ * dirender Safari iPhone (halaman jadi lambat & tersendat).
+ */
 body {
   min-height: 100vh;
-}
-/* Latar seperti wins-court.com: krem #FAFAF7 dengan dua cahaya lembut (lime di atas, mint di kanan bawah). */
-body::before,
-body::after {
-  content: '';
-  position: fixed;
-  z-index: -1;
-  border-radius: 50%;
-  pointer-events: none;
-}
-body::before {
-  left: 50%;
-  top: 120px;
-  width: 440px;
-  height: 440px;
-  transform: translateX(-50%);
-  background: rgba(198, 255, 61, 0.18);
-  filter: blur(150px);
-}
-body::after {
-  right: -95px;
-  bottom: 80px;
-  width: 380px;
-  height: 380px;
-  background: rgba(43, 197, 138, 0.1);
-  filter: blur(160px);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(520px 420px at 50% 260px, rgba(198, 255, 61, 0.17), rgba(198, 255, 61, 0) 70%),
+    radial-gradient(460px 460px at 100% 720px, rgba(43, 197, 138, 0.09), rgba(43, 197, 138, 0) 70%);
+  background-repeat: no-repeat;
 }
 ::selection {
   background: var(--lime);
@@ -603,10 +587,8 @@ details.adv[open] summary .chev {
   gap: 4px;
   padding: 6px;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.92);
-  background: color-mix(in srgb, var(--card) 88%, transparent);
-  -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  backdrop-filter: blur(16px) saturate(1.5);
+  /* Tanpa backdrop-filter: blur pada elemen fixed berat di Safari iPhone. */
+  background: rgba(255, 255, 255, 0.97);
   border: 1px solid var(--hairline);
   box-shadow: 0 24px 60px -24px rgba(14, 23, 20, 0.35);
   z-index: 40;
@@ -852,8 +834,6 @@ details.adv[open] summary .chev {
   position: fixed;
   inset: 0;
   background: rgba(10, 15, 13, 0.45);
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
   z-index: 60;
   display: flex;
   align-items: flex-end;

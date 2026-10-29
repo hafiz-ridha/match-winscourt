@@ -252,9 +252,25 @@ export function CourtArt({
   const shownLeft = score ? (leftTeam === 'a' ? score.a : score.b) : null;
   const shownRight = score ? (leftTeam === 'a' ? score.b : score.a) : null;
 
+  // Hemat baterai & CPU (terutama iPhone): jeda animasi SVG saat lapangan di luar layar atau tab disembunyikan.
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || typeof svg.pauseAnimations !== 'function') return;
+    let visible = true;
+    const apply = () => (visible && document.visibilityState === 'visible' ? svg.unpauseAnimations() : svg.pauseAnimations());
+    const io = typeof IntersectionObserver === 'function' ? new IntersectionObserver(([e]) => ((visible = e.isIntersecting), apply())) : null;
+    io?.observe(svg);
+    document.addEventListener('visibilitychange', apply);
+    return () => {
+      io?.disconnect();
+      document.removeEventListener('visibilitychange', apply);
+    };
+  }, []);
+
   return (
     <div className="court-wrap">
-      <svg className={`court-art${glow ? ' glow' : ''}`} viewBox="0 0 300 150" style={style} preserveAspectRatio="xMidYMid meet" aria-hidden>
+      <svg ref={svgRef} className={`court-art${glow ? ' glow' : ''}`} viewBox="0 0 300 150" style={style} preserveAspectRatio="xMidYMid meet" aria-hidden>
         {sport === 'badminton' ? <BadmintonLines singles={size === 1} /> : <PadelLines />}
 
         {players &&
