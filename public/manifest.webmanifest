@@ -1,0 +1,10 @@
+{
+  "name": "match.wins-court.com",
+  "short_name": "match",
+  "description": "Matchmaking & skoring badminton dan padel di Wins Court",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFAF7",
+  "theme_color": "#0E1714",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

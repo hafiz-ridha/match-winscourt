@@ -1,0 +1,20 @@
+services:
+  match:
+    build: .
+    image: match-winscourt:latest
+    container_name: match-winscourt
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8787"
+      DB_FILE: /app/data/match.db
+    # Hanya bisa diakses dari server sendiri; publik lewat reverse proxy aaPanel (Nginx + SSL).
+    ports:
+      - "127.0.0.1:${APP_PORT:-8787}:8787"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
