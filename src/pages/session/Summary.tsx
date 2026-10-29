@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { formatInfo } from '../../../shared/formats.ts';
+import { formatInfo, isManualBooking, manualExpiry } from '../../../shared/formats.ts';
+import { fmtDate } from '../../../shared/util.ts';
 import { doneMatches, matchScore, playerStandings, teamStandings, unitsOf } from '../../../shared/standings.ts';
 import { Download, Share, Trophy } from '../../components/Icons.tsx';
 import { Confetti, useRun } from '../../components/ui.tsx';
@@ -94,6 +95,14 @@ export function Summary({ ctx }: { ctx: Ctx }) {
           </button>
         )}
       </div>
+
+      {isManualBooking(s.bookingId) && (
+        <div className="banner banner-warn no-print">
+          <span>
+            Hasil sesi ini tersimpan sampai <b>{fmtDate(manualExpiry(s.end))}</b>. Unduh gambar, PDF, atau CSV untuk menyimpannya lebih lama.
+          </span>
+        </div>
+      )}
 
       <StandingsTable list={players} mine={playerId} showComp={s.settings.compensation} title="Peringkat akhir" />
     </div>

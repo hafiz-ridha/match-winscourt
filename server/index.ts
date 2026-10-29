@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { scryptSync, timingSafeEqual, randomBytes } from 'node:crypto';
-import { courtLabels, defaultRules, defaultSettings, formatInfo, MAX_COURTS } from '../shared/formats.ts';
+import { courtLabels, defaultRules, defaultSettings, formatInfo, MANUAL_RETENTION_DAYS, MAX_COURTS } from '../shared/formats.ts';
 import type { Booking, FormatId, Gender, Level, Session } from '../shared/types.ts';
 import { maskPhone, normalizeName, normalizePhone, uid } from '../shared/util.ts';
 import { applyAction, cleanName, HttpError, newPlayer, type Role } from './actions.ts';
@@ -67,7 +67,7 @@ function publicSession(s: Session, includeKey = false): Session {
 
 const loadSession = (slug: string): Session => {
   const s = sessions.get(slug);
-  if (!s) throw new HttpError(404, 'Sesi tidak ditemukan');
+  if (!s) throw new HttpError(404, `Sesi tidak ditemukan. Sesi manual akun umum dihapus otomatis ${MANUAL_RETENTION_DAYS} hari setelah jam main.`);
   // Rapikan data lama: "Badminton N" → "Line N", dan nama "1. Ayu" → "Ayu".
   const before = JSON.stringify([s.courtNames, s.players.map((p) => p.name)]);
   if (s.sport === 'badminton') s.courtNames = s.courtNames.map((n) => n.replace(/^Badminton (\d)$/, 'Line $1'));
@@ -153,7 +153,7 @@ function syncBookingInBackground(slug: string, host: Host) {
 const api = express.Router();
 
 api.get('/config', (_req, res) => {
-  res.json({ mock: isMock, mockAccounts: isMock ? MOCK_ACCOUNTS : [], maxCourts: MAX_COURTS });
+  res.json({ mock: isMock, mockAccounts: isMock ? MOCK_ACCOUNTS : [], maxCourts: MAX_COURTS, manualRetentionDays: MANUAL_RETENTION_DAYS });
 });
 
 api.post('/auth/login', async (req, res) => {
@@ -440,6 +440,26 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   res.status(500).json({ error: 'Terjadi kesalahan di server' });
 });
+
+/* ---------------- masa simpan data akun umum ---------------- */
+
+// Data pertandingan sesi manual (akun umum) disimpan 30 hari setelah jam main selesai.
+// Angka dari shared/formats.ts agar sama dengan yang tampil di aplikasi.
+
+function purgeOldManualSessions() {
+  try {
+    const { slugs } = sessions.purgeManual(MANUAL_RETENTION_DAYS);
+    for (const slug of slugs) {
+      for (const r of streams.get(slug) ?? []) r.end();
+      streams.delete(slug);
+    }
+    if (slugs.length) console.log(`[masa simpan] ${slugs.length} sesi manual > ${MANUAL_RETENTION_DAYS} hari dihapus`);
+  } catch (e) {
+    console.error('[masa simpan] gagal:', e);
+  }
+}
+purgeOldManualSessions();
+setInterval(purgeOldManualSessions, 6 * 3600_000).unref();
 
 const port = Number(process.env.PORT ?? 8787);
 const server = app.listen(port, () => {

@@ -111,6 +111,29 @@ export const sessions = {
     db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     db.prepare('DELETE FROM player_tokens WHERE session_id = ?').run(id);
   },
+  /**
+   * Masa simpan data pertandingan akun umum: sesi manual (booking_id MANUAL-…) dihapus
+   * beserta pemain, ronde, skor & token pemainnya setelah `days` hari sejak jam main selesai.
+   * Data akun (nama, email, no. HP, PIN) di tabel hosts/accounts TIDAK ikut dihapus.
+   */
+  purgeManual(days: number): { slugs: string[] } {
+    const cutoff = Date.now() - days * 86_400_000;
+    const rows = db.prepare("SELECT id, slug, data FROM sessions WHERE booking_id LIKE 'MANUAL-%'").all() as { id: string; slug: string; data: string }[];
+    const slugs: string[] = [];
+    for (const r of rows) {
+      let end = NaN;
+      try {
+        end = Date.parse((JSON.parse(r.data) as Session).end);
+      } catch {
+        /* data rusak: biarkan */
+      }
+      if (Number.isFinite(end) && end < cutoff) {
+        sessions.remove(r.id);
+        slugs.push(r.slug);
+      }
+    }
+    return { slugs };
+  },
 };
 
 export const playerTokens = {

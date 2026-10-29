@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { courtLabels, formatInfo } from '../../shared/formats.ts';
+import { courtLabels, formatInfo, MANUAL_RETENTION_DAYS } from '../../shared/formats.ts';
 import type { Booking, Sport } from '../../shared/types.ts';
 import { fmtDate, fmtTime } from '../../shared/util.ts';
 import { api, auth, type Me } from '../api.ts';
@@ -395,6 +395,9 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grow">
               <h3>Buat sesi manual</h3>
               <p className="small mute">Pilih sendiri olahraga, tanggal, jam main, dan jumlah lapangan. Tidak perlu booking Wins Court.</p>
+              <p className="tiny mute" style={{ marginTop: 4 }}>
+                Data pertandingan sesi manual disimpan {MANUAL_RETENTION_DAYS} hari setelah jam main. Akun kamu (nama, email, PIN) tetap tersimpan.
+              </p>
             </div>
           </div>
           <button className="btn btn-primary btn-block" onClick={() => nav('/baru/manual')}>

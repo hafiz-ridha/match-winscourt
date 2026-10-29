@@ -79,3 +79,11 @@ export function rulesLabel(r: ScoreRules): string {
   if (r.kind === 'games') return `${r.gamesMode === 'race' ? 'Race to' : 'Total'} ${r.games} game · ${deuce}`;
   return `Best of 3 set · ${deuce}`;
 }
+
+/** Masa simpan data pertandingan akun umum (sesi manual), dihitung dari jam main selesai. Data akun tetap disimpan. */
+export const MANUAL_RETENTION_DAYS = 30;
+
+export const isManualBooking = (bookingId: string) => bookingId.startsWith('MANUAL-');
+
+/** Tanggal data sesi manual akan dihapus (ISO). */
+export const manualExpiry = (endIso: string) => new Date(Date.parse(endIso) + MANUAL_RETENTION_DAYS * 86_400_000).toISOString();

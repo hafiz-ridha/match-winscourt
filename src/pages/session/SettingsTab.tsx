@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { formatInfo, formatsFor } from '../../../shared/formats.ts';
+import { formatInfo, formatsFor, isManualBooking, MANUAL_RETENTION_DAYS, manualExpiry } from '../../../shared/formats.ts';
 import type { FormatId, ScoreRules, SessionSettings } from '../../../shared/types.ts';
 import { fmtDate, fmtTime } from '../../../shared/util.ts';
 import { api } from '../../api.ts';
@@ -58,6 +58,11 @@ export function SettingsTab({ ctx }: { ctx: Ctx }) {
         <span className="mute">
           {fmtDate(s.start)} · {fmtTime(s.start)}–{fmtTime(s.end)} · {s.courtNames.join(', ')}
         </span>
+        {isManualBooking(s.bookingId) && (
+          <span className="tiny mute">
+            Data pertandingan sesi ini disimpan sampai {fmtDate(manualExpiry(s.end))} ({MANUAL_RETENTION_DAYS} hari setelah jam main), lalu dihapus otomatis.
+          </span>
+        )}
       </div>
 
       <div className="card stack">

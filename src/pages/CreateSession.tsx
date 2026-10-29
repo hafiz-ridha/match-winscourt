@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { courtLabels, defaultRules, defaultSettings, formatsFor } from '../../shared/formats.ts';
+import { courtLabels, defaultRules, defaultSettings, formatsFor, MANUAL_RETENTION_DAYS } from '../../shared/formats.ts';
 import type { Booking, FormatId, ScoreRules, SessionSettings } from '../../shared/types.ts';
 import { fmtDate, fmtTime } from '../../shared/util.ts';
 import { api, auth } from '../api.ts';
@@ -176,6 +176,9 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
           ) : (
             <p className="hint">Padel: 1 lapangan.</p>
           )}
+          <p className="tiny mute">
+            Data pertandingan (pemain, skor, peringkat) disimpan {MANUAL_RETENTION_DAYS} hari setelah jam main, lalu dihapus otomatis.
+          </p>
         </div>
       ) : (
       <div className="card hero stack rise" style={{ gap: 10 }}>

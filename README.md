@@ -3,7 +3,7 @@
 Matchmaking & skoring **badminton (Line 1–4)** dan **padel (1 lapangan)** untuk penyewa Wins Court. Semua fitur gratis.
 
 - Host login dengan **nama + no. HP penyewa** yang tercatat di booking Wins Court; sesi mengikuti jam main booking (boleh lewat, dengan peringatan).
-- **Akun umum** (tanpa booking Wins Court): daftar dengan nama, email, no. HP, dan PIN 6 digit; masuk dengan no. HP atau email + PIN; bisa membuat **sesi manual** (olahraga, tanggal, jam main, jumlah lapangan diisi sendiri).
+- **Akun umum** (tanpa booking Wins Court): daftar dengan nama, email, no. HP, dan PIN 6 digit; masuk dengan no. HP atau email + PIN; bisa membuat **sesi manual** (olahraga, tanggal, jam main, jumlah lapangan diisi sendiri). Data pertandingan sesi manual disimpan **30 hari** setelah jam main lalu dihapus otomatis; data akun (nama, email, no. HP, PIN) tetap disimpan.
 - Pemain gabung lewat link sesi (pilih nama / masuk dengan PIN / daftar baru), masuk waitlist sampai host menyetujui.
 - Badminton: Mabar Bergilir, Americano, Knockout, Grup → Knockout — lapangan yang selesai langsung lanjut tanpa menunggu lapangan lain.
 - Padel: Americano, Mexicano, Mix Americano, Mixicano, Team Americano/Mexicano, Pemenang Bertahan, Main dengan Tamu, Club vs Club, Knockout, Grup → Knockout, Custom.
