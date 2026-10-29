@@ -53,7 +53,7 @@ export function SettingsTab({ ctx }: { ctx: Ctx }) {
     <div className="stack-lg">
       <div className="card card-surface stack small" style={{ gap: 6 }}>
         <div className="row">
-          <Lock size={14} /> <b>Dari booking Wins Court {s.bookingId}</b>
+          <Lock size={14} /> <b>{s.bookingId.startsWith('MANUAL-') ? 'Sesi manual (tanpa booking Wins Court)' : `Dari booking Wins Court ${s.bookingId}`}</b>
         </div>
         <span className="mute">
           {fmtDate(s.start)} · {fmtTime(s.start)}–{fmtTime(s.end)} · {s.courtNames.join(', ')}

@@ -40,7 +40,110 @@ export function Home() {
   );
 }
 
+/** Akun umum: masuk (no. HP/email + PIN 6 digit) atau daftar (nama, email, no. HP, PIN). */
+function AccountAuth({ onDone }: { onDone: () => void }) {
+  const [tab, setTab] = useState<'login' | 'register'>('login');
+  const [id, setId] = useState('');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pinField = (value: string, set: (v: string) => void, label: string, auto: string) => (
+    <label className="field">
+      <span className="label">{label}</span>
+      <input
+        className="input input-pin"
+        type="password"
+        inputMode="numeric"
+        autoComplete={auto}
+        maxLength={6}
+        value={value}
+        onChange={(e) => set(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        placeholder="••••••"
+        required
+      />
+    </label>
+  );
+  const go = async (e: FormEvent, fn: () => Promise<{ token: string }>) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const r = await fn();
+      auth.set(r.token);
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="small mute">Untuk host yang tidak booking di Wins Court. Buat sesi sendiri: pilih olahraga, jam main, dan jumlah lapangan.</p>
+      <div className="minichips">
+        <button type="button" className={tab === 'login' ? 'on' : ''} onClick={() => (setTab('login'), setError(null))}>
+          Masuk
+        </button>
+        <button type="button" className={tab === 'register' ? 'on' : ''} onClick={() => (setTab('register'), setError(null))}>
+          Daftar akun baru
+        </button>
+      </div>
+      {tab === 'login' ? (
+        <form className="stack" onSubmit={(e) => go(e, () => api.accountLogin(id, pin))}>
+          <label className="field">
+            <span className="label">No. HP atau email</span>
+            <input className="input" value={id} onChange={(e) => setId(e.target.value)} placeholder="08xx… atau nama@email.com" autoComplete="username" required />
+          </label>
+          {pinField(pin, setPin, 'PIN (6 angka)', 'current-password')}
+          {error && <div className="banner banner-danger">{error}</div>}
+          <button className="btn btn-primary btn-block" disabled={busy || pin.length !== 6 || !id.trim()}>
+            Masuk <Arrow size={18} />
+          </button>
+          <p className="tiny mute center">Lupa PIN? Hubungi admin Wins Court.</p>
+        </form>
+      ) : (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            if (pin !== pin2) {
+              e.preventDefault();
+              setError('Konfirmasi PIN tidak sama');
+              return;
+            }
+            go(e, () => api.register({ name, email, phone, pin }));
+          }}
+        >
+          <label className="field">
+            <span className="label">Nama lengkap</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={60} required />
+          </label>
+          <label className="field">
+            <span className="label">Email</span>
+            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="nama@email.com" required />
+          </label>
+          <label className="field">
+            <span className="label">No. HP</span>
+            <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="tel" placeholder="08xx xxxx xxxx" required />
+          </label>
+          {pinField(pin, setPin, 'Buat PIN (6 angka)', 'new-password')}
+          {pinField(pin2, setPin2, 'Ulangi PIN', 'new-password')}
+          <p className="hint">Hindari angka sama atau berurutan (mis. 111111, 123456).</p>
+          {error && <div className="banner banner-danger">{error}</div>}
+          <button className="btn btn-primary btn-block" disabled={busy || pin.length !== 6 || pin2.length !== 6}>
+            Daftar & masuk <Arrow size={18} />
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function Login({ onDone }: { onDone: () => void }) {
+  const [mode, setMode] = useState<'renter' | 'account'>('renter');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [link, setLink] = useState('');
@@ -85,13 +188,21 @@ function Login({ onDone }: { onDone: () => void }) {
         <p className="mute small">Susun pertandingan adil otomatis, catat skor dari HP, dan lihat peringkat live. Gratis, semua fitur.</p>
       </div>
 
-      <form className="card stack rise" style={{ animationDelay: '80ms' }} onSubmit={submit}>
-        <div>
-          <h2>Masuk sebagai host</h2>
-          <p className="small mute" style={{ marginTop: 4 }}>
-            Pakai nama dan no. HP yang tercatat saat booking lapangan di Wins Court.
-          </p>
-        </div>
+      <div className="card stack rise" style={{ animationDelay: '80ms' }}>
+        <h2>Masuk sebagai host</h2>
+        <Seg
+          value={mode}
+          onChange={setMode}
+          options={[
+            { v: 'renter', label: 'Penyewa Wins Court' },
+            { v: 'account', label: 'Akun umum' },
+          ]}
+        />
+        {mode === 'account' ? (
+          <AccountAuth onDone={onDone} />
+        ) : (
+      <form className="stack" onSubmit={submit}>
+        <p className="small mute">Pakai nama dan no. HP yang tercatat saat booking lapangan di Wins Court.</p>
         <label className="field">
           <span className="label">Nama penyewa</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contoh: Budi Santoso" autoComplete="name" required />
@@ -142,6 +253,8 @@ function Login({ onDone }: { onDone: () => void }) {
           </div>
         )}
       </form>
+        )}
+      </div>
 
       <form className="card stack rise" style={{ animationDelay: '160ms' }} onSubmit={openLink}>
         <div>
@@ -248,7 +361,10 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <span className="chip chip-outline">
             <span className="dot" style={{ color: 'var(--lime-deep)' }} /> Minggu ini
           </span>
-          <span className="tiny mute">{me.host.phone}</span>
+          <span className="tiny mute">
+            {me.host.phone}
+            {me.host.email ? ` · ${me.host.email}` : ''}
+          </span>
         </div>
         <div className="row-between" style={{ alignItems: 'flex-end' }}>
           <h2 style={{ fontSize: 26 }}>
@@ -270,12 +386,33 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <HeroCourt initial={first?.sport ?? 'badminton'} />
       </div>
 
+      {me.account && (
+        <section className="card stack rise">
+          <div className="row" style={{ alignItems: 'flex-start' }}>
+            <span className="icon-btn" style={{ background: 'var(--lime)', borderColor: 'transparent' }}>
+              <Plus size={20} />
+            </span>
+            <div className="grow">
+              <h3>Buat sesi manual</h3>
+              <p className="small mute">Pilih sendiri olahraga, tanggal, jam main, dan jumlah lapangan. Tidak perlu booking Wins Court.</p>
+            </div>
+          </div>
+          <button className="btn btn-primary btn-block" onClick={() => nav('/baru/manual')}>
+            <Plus size={16} /> Buat sesi manual
+          </button>
+        </section>
+      )}
+
       <section className="stack">
         <div>
           <div className="eyebrow">Dari Wins Court</div>
           <h2>Booking kamu</h2>
         </div>
-        {me.bookings.length === 0 && <div className="card card-surface small mute">Tidak ada booking untuk 7 hari ke depan.</div>}
+        {me.bookings.length === 0 && (
+          <div className="card card-surface small mute">
+            Tidak ada booking Wins Court untuk 7 hari ke depan{me.account ? ' — pakai "Buat sesi manual" di atas.' : '.'}
+          </div>
+        )}
         {me.bookings.map((b, i) => {
           const s = sessionFor(b);
           const past = new Date(b.end).getTime() < Date.now();

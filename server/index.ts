@@ -6,7 +6,7 @@ import { courtLabels, defaultRules, defaultSettings, formatInfo, MAX_COURTS } fr
 import type { Booking, FormatId, Gender, Level, Session } from '../shared/types.ts';
 import { maskPhone, normalizeName, normalizePhone, uid } from '../shared/util.ts';
 import { applyAction, cleanName, HttpError, newPlayer, type Role } from './actions.ts';
-import { hosts, playerTokens, sessions, type Host } from './db.ts';
+import { accounts, hostById, hosts, playerTokens, sessions, type Host } from './db.ts';
 import { findBookings, isMock, MOCK_ACCOUNTS } from './winscourt.ts';
 
 const app = express();
@@ -121,7 +121,7 @@ const syncing = new Set<string>();
  */
 function syncBookingInBackground(slug: string, host: Host) {
   const s0 = sessions.get(slug);
-  if (!s0 || s0.status === 'finished' || syncing.has(slug)) return;
+  if (!s0 || s0.status === 'finished' || isManual(s0.bookingId) || syncing.has(slug)) return;
   if (s0.bookingSyncedAt && Date.now() - s0.bookingSyncedAt < 5 * 60_000) return;
   syncing.add(slug);
   findBookings(host.name, host.phone, { fresh: true })
@@ -169,8 +169,65 @@ api.post('/auth/login', async (req, res) => {
   res.json({ token: host.token, host: { name: host.name, phone: maskPhone(phone) }, bookings });
 });
 
+/* ---------- akun umum: nama + email + no. HP + PIN 6 digit ---------- */
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function weakPin(pin: string): boolean {
+  if (/^(\d)\1{5}$/.test(pin)) return true; // 000000, 111111, …
+  const d = pin.split('').map(Number);
+  const step = (k: number) => d.every((x, i) => i === 0 || x === (d[i - 1] + k + 10) % 10);
+  return step(1) || step(-1); // 123456, 654321, 890123, …
+}
+
+const accountJson = (host: Host, email: string | null) => ({
+  name: host.name,
+  phone: maskPhone(host.phone),
+  email: email ? email.replace(/^(.).*?(@.*)$/, '$1•••$2') : null,
+});
+
+api.post('/auth/register', (req, res) => {
+  const name = cleanName(req.body?.name).slice(0, 60);
+  const email = String(req.body?.email ?? '').trim().toLowerCase().slice(0, 120);
+  const phone = normalizePhone(String(req.body?.phone ?? ''));
+  const pin = String(req.body?.pin ?? '');
+  if (name.length < 2) throw new HttpError(400, 'Isi nama lengkap');
+  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Format email tidak valid');
+  if (!/^62\d{8,13}$/.test(phone)) throw new HttpError(400, 'No. HP tidak valid (contoh: 0812xxxxxxx)');
+  if (!/^\d{6}$/.test(pin)) throw new HttpError(400, 'PIN harus 6 angka');
+  if (weakPin(pin)) throw new HttpError(400, 'PIN terlalu mudah ditebak. Hindari angka sama atau berurutan.');
+  rateLimit(`reg:${phone}`);
+  if (accounts.byEmail(email)) throw new HttpError(409, 'Email sudah terdaftar. Silakan masuk.');
+  const existing = hosts.byPhone(phone);
+  if (existing && accounts.byHost(existing.id)) throw new HttpError(409, 'No. HP sudah terdaftar. Silakan masuk.');
+  // No. HP yang pernah login sebagai penyewa Wins Court tersambung ke akun ini (sesi lamanya tetap terlihat).
+  const host = hosts.upsert({ id: existing?.id ?? uid(12), name, phone, token: existing?.token ?? token() });
+  const salt = randomBytes(16).toString('hex');
+  accounts.create({ host_id: host.id, email, pin_hash: hashPin(pin, salt), pin_salt: salt });
+  res.json({ token: host.token, host: accountJson(host, email) });
+});
+
+api.post('/auth/account-login', (req, res) => {
+  const id = String(req.body?.id ?? '').trim().toLowerCase();
+  const pin = String(req.body?.pin ?? '');
+  if (!id || !/^\d{6}$/.test(pin)) throw new HttpError(400, 'Isi no. HP atau email, dan PIN 6 angka');
+  const isEmail = id.includes('@');
+  const key = `acc:${isEmail ? id : normalizePhone(id)}`;
+  rateLimit(key);
+  const acc = isEmail ? accounts.byEmail(id) : (() => {
+    const h = hosts.byPhone(normalizePhone(id));
+    return h ? accounts.byHost(h.id) : undefined;
+  })();
+  const host = acc ? hostById(acc.host_id) : undefined;
+  // Pesan sama untuk akun tidak ada & PIN salah (tidak membocorkan siapa yang terdaftar).
+  if (!acc || !host || !pinOk(pin, acc.pin_salt, acc.pin_hash)) throw new HttpError(401, 'No. HP/email atau PIN salah');
+  attempts.delete(key);
+  res.json({ token: host.token, host: accountJson(host, acc.email) });
+});
+
 api.get('/me', async (req, res) => {
   const host = requireHost(req);
+  const acc = accounts.byHost(host.id);
   let bookings: Booking[] = [];
   try {
     bookings = await findBookings(host.name, host.phone);
@@ -190,17 +247,46 @@ api.get('/me', async (req, res) => {
     players: s.players.filter((p) => p.status !== 'waitlist' && p.status !== 'left').length,
     waitlist: s.players.filter((p) => p.status === 'waitlist').length,
   }));
-  res.json({ host: { name: host.name, phone: maskPhone(host.phone) }, bookings, sessions: list });
+  res.json({ host: accountJson(host, acc?.email ?? null), account: !!acc, bookings, sessions: list });
 });
+
+/** Sesi manual (akun umum): olahraga, tanggal, jam & jumlah lapangan diisi sendiri, tanpa booking Wins Court. */
+function manualBooking(host: Host, m: Record<string, unknown>): Booking {
+  const sport = m.sport === 'padel' ? 'padel' : m.sport === 'badminton' ? 'badminton' : null;
+  if (!sport) throw new HttpError(400, 'Pilih olahraga');
+  const date = String(m.date ?? '');
+  const from = String(m.start ?? '');
+  const to = String(m.end ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(from) || !/^\d{2}:\d{2}$/.test(to)) throw new HttpError(400, 'Isi tanggal dan jam main');
+  const start = `${date}T${from}:00+07:00`;
+  const end = to === '24:00' ? `${date}T23:59:59+07:00` : `${date}T${to}:00+07:00`;
+  const t0 = Date.parse(start);
+  const t1 = Date.parse(end);
+  if (Number.isNaN(t0) || Number.isNaN(t1)) throw new HttpError(400, 'Tanggal atau jam tidak valid');
+  const minutes = (t1 - t0) / 60_000;
+  if (minutes < 30 || minutes > 8 * 60) throw new HttpError(400, 'Durasi main 30 menit sampai 8 jam (jam selesai harus setelah jam mulai)');
+  if (t1 < Date.now() - 12 * 3600_000 || t0 > Date.now() + 60 * 86_400_000) throw new HttpError(400, 'Tanggal main maksimal 60 hari ke depan');
+  const n = sport === 'padel' ? 1 : Math.max(1, Math.min(MAX_COURTS.badminton, Math.floor(Number(m.courts) || 1)));
+  return { id: `MANUAL-${uid(8)}`, name: host.name, phone: host.phone, sport, courts: Array.from({ length: n }, (_, i) => i + 1), start, end };
+}
+
+const isManual = (bookingId: string) => bookingId.startsWith('MANUAL-');
 
 api.post('/sessions', async (req, res) => {
   const host = requireHost(req);
   const body = req.body ?? {};
-  const bookings = await findBookings(host.name, host.phone);
-  const b = bookings.find((x) => x.id === String(body.bookingId));
-  if (!b) throw new HttpError(404, 'Booking tidak ditemukan untuk akun ini');
-  const dup = sessions.byHost(host.id).find((s) => s.bookingId === b.id);
-  if (dup) throw new HttpError(409, `Booking ini sudah punya sesi: ${dup.name}`);
+  let b: Booking;
+  if (body.manual) {
+    if (!accounts.byHost(host.id)) throw new HttpError(403, 'Sesi manual hanya untuk akun umum. Daftar akun dulu.');
+    b = manualBooking(host, body.manual);
+  } else {
+    const bookings = await findBookings(host.name, host.phone);
+    const found = bookings.find((x) => x.id === String(body.bookingId));
+    if (!found) throw new HttpError(404, 'Booking tidak ditemukan untuk akun ini');
+    b = found;
+    const dup = sessions.byHost(host.id).find((s) => s.bookingId === b.id);
+    if (dup) throw new HttpError(409, `Booking ini sudah punya sesi: ${dup.name}`);
+  }
   const format: FormatId = formatInfo(body.format).sports.includes(b.sport) ? formatInfo(body.format).id : b.sport === 'badminton' ? 'rotation' : 'americano';
   const courts = Math.max(1, Math.min(MAX_COURTS[b.sport], b.courts.length));
   if (courts < formatInfo(format).minCourts) throw new HttpError(400, 'Format ini butuh lebih banyak lapangan');
@@ -221,7 +307,7 @@ api.post('/sessions', async (req, res) => {
     start: b.start,
     end: b.end,
     courts,
-    courtNames: courtLabels(b.sport, b.courts.slice(0, courts)),
+    courtNames: isManual(b.id) ? (b.sport === 'padel' ? ['Padel'] : b.courts.slice(0, courts).map((c) => `Lapangan ${c}`)) : courtLabels(b.sport, b.courts.slice(0, courts)),
     teamSize,
     rules,
     maxPlayers: Number.isInteger(body.maxPlayers) && body.maxPlayers > 0 ? body.maxPlayers : null,

@@ -7,7 +7,7 @@ import { api, auth } from '../api.ts';
 import { CourtArt } from '../components/CourtArt.tsx';
 import { Back, Chevron, Lock } from '../components/Icons.tsx';
 import { RulesEditor, SettingsEditor } from '../components/RulesEditor.tsx';
-import { Brand, Loader, Seg, SportChip, useRun } from '../components/ui.tsx';
+import { Brand, Loader, Seg, SportChip, Stepper, useRun } from '../components/ui.tsx';
 
 export function CreateSession() {
   const { bookingId } = useParams();
@@ -23,6 +23,11 @@ export function CreateSession() {
     api
       .me()
       .then((me) => {
+        if (bookingId === 'manual') {
+          if (me.account) setBooking(manualDefault());
+          else setError('Sesi manual hanya untuk akun umum. Keluar lalu daftar/masuk lewat tab "Akun umum".');
+          return;
+        }
         const b = me.bookings.find((x) => x.id === bookingId);
         const existing = me.sessions.find((s) => s.bookingId === bookingId);
         if (existing) nav(`/s/${existing.slug}`, { replace: true });
@@ -44,12 +49,43 @@ export function CreateSession() {
       </div>
     );
   if (!booking) return <Loader />;
-  return <Form booking={booking} />;
+  return <Form initial={booking} manual={bookingId === 'manual'} />;
 }
 
-function Form({ booking }: { booking: Booking }) {
+/** Tanggal hari ini (WIB) + n hari, format YYYY-MM-DD. */
+const wibDate = (plusDays = 0) => new Date(Date.now() + 7 * 3600_000 + plusDays * 86_400_000).toISOString().slice(0, 10);
+
+/** Jam penuh berikutnya (WIB), format HH:00. */
+function nextHour(add = 1) {
+  const h = (new Date(Date.now() + 7 * 3600_000).getUTCHours() + add) % 24;
+  return `${String(h).padStart(2, '0')}:00`;
+}
+
+function manualDefault(): Booking {
+  const start = nextHour(1);
+  const end = nextHour(3);
+  const date = start > end ? wibDate(1) : wibDate(0);
+  return { id: 'manual', name: '', phone: '', sport: 'badminton', courts: [1, 2], start: `${date}T${start}:00+07:00`, end: `${date}T${end}:00+07:00` };
+}
+
+function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
   const nav = useNavigate();
   const { run, busy } = useRun();
+  // Sesi manual: olahraga, tanggal, jam & jumlah lapangan diisi sendiri.
+  const [mSport, setMSport] = useState<Booking['sport']>(initial.sport);
+  const [mDate, setMDate] = useState(initial.start.slice(0, 10));
+  const [mStart, setMStart] = useState(initial.start.slice(11, 16));
+  const [mEnd, setMEnd] = useState(initial.end.slice(11, 16));
+  const [mCourts, setMCourts] = useState(initial.courts.length);
+  const booking: Booking = manual
+    ? {
+        ...initial,
+        sport: mSport,
+        courts: Array.from({ length: mSport === 'padel' ? 1 : mCourts }, (_, i) => i + 1),
+        start: `${mDate}T${mStart}:00+07:00`,
+        end: `${mDate}T${mEnd === '24:00' ? '23:59' : mEnd}:00+07:00`,
+      }
+    : initial;
   const courts = booking.sport === 'padel' ? 1 : Math.min(4, booking.courts.length);
   const formats = useMemo(() => formatsFor(booking.sport, courts), [booking.sport, courts]);
   const [name, setName] = useState('');
@@ -59,13 +95,19 @@ function Form({ booking }: { booking: Booking }) {
   const [settings, setSettings] = useState<SessionSettings>(defaultSettings());
   const [maxPlayers, setMaxPlayers] = useState('');
   const [names, setNames] = useState('');
-  const fmt = formats.find((f) => f.id === format)!;
+  // Ganti olahraga (sesi manual) → format & aturan skor kembali ke bawaan olahraga itu.
+  useEffect(() => {
+    if (!manual) return;
+    setFormat(mSport === 'badminton' ? 'rotation' : 'americano');
+    setRules(defaultRules(mSport));
+  }, [mSport, manual]);
+  const fmt = formats.find((f) => f.id === format) ?? formats[0];
   const singlesAllowed = booking.sport === 'badminton' && !fmt.mixed;
 
   const submit = () =>
     run(async () => {
       const r = await api.createSession({
-        bookingId: booking.id,
+        ...(manual ? { manual: { sport: mSport, date: mDate, start: mStart, end: mEnd, courts: mCourts } } : { bookingId: booking.id }),
         name,
         format,
         teamSize: singlesAllowed ? teamSize : 2,
@@ -95,6 +137,47 @@ function Form({ booking }: { booking: Booking }) {
         </div>
       </div>
 
+      {manual ? (
+        <div className="card hero stack rise">
+          <div className="row-between">
+            <span className="eyebrow">Sesi manual</span>
+            <span className="chip chip-outline tiny">Tanpa booking Wins Court</span>
+          </div>
+          <div className="sport-switch" role="radiogroup" aria-label="Olahraga">
+            {(['badminton', 'padel'] as const).map((sp) => (
+              <button key={sp} type="button" role="radio" aria-checked={mSport === sp} className={`${sp}${mSport === sp ? ' on' : ''}`} onClick={() => setMSport(sp)}>
+                {sp === 'padel' ? 'Padel' : 'Badminton'}
+              </button>
+            ))}
+          </div>
+          <div className="court-stage">
+            <CourtArt key={mSport} sport={mSport} teamSize={singlesAllowed ? teamSize : 2} players={false} />
+          </div>
+          <label className="field">
+            <span className="label">Tanggal main</span>
+            <input className="input" type="date" value={mDate} min={wibDate(0)} max={wibDate(60)} onChange={(e) => setMDate(e.target.value)} required />
+          </label>
+          <div className="row">
+            <label className="field grow">
+              <span className="label">Jam mulai</span>
+              <input className="input" type="time" step={900} value={mStart} onChange={(e) => setMStart(e.target.value)} required />
+            </label>
+            <label className="field grow">
+              <span className="label">Jam selesai</span>
+              <input className="input" type="time" step={900} value={mEnd} onChange={(e) => setMEnd(e.target.value)} required />
+            </label>
+          </div>
+          {mSport === 'badminton' ? (
+            <div className="field">
+              <span className="label">Jumlah lapangan</span>
+              <Stepper value={mCourts} min={1} max={4} onChange={setMCourts} />
+              <span className="hint">Badminton maksimal 4 lapangan.</span>
+            </div>
+          ) : (
+            <p className="hint">Padel: 1 lapangan.</p>
+          )}
+        </div>
+      ) : (
       <div className="card hero stack rise" style={{ gap: 10 }}>
         <div className="row-between">
           <SportChip sport={booking.sport} />
@@ -117,6 +200,7 @@ function Form({ booking }: { booking: Booking }) {
         </div>
         <p className="tiny mute">Olahraga, lapangan, dan jam main mengikuti booking dan tidak bisa diubah.</p>
       </div>
+      )}
 
       <div className="card stack rise" style={{ animationDelay: '60ms' }}>
         <label className="field">

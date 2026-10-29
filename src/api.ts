@@ -92,7 +92,9 @@ export interface SessionSummary {
 }
 
 export interface Me {
-  host: { name: string; phone: string };
+  host: { name: string; phone: string; email?: string | null };
+  /** Host punya akun umum (boleh membuat sesi manual). */
+  account?: boolean;
   bookings: Booking[];
   sessions: SessionSummary[];
 }
@@ -102,6 +104,8 @@ export type Role = 'host' | 'referee' | 'player' | 'viewer';
 export const api = {
   config: () => req<{ mock: boolean; mockAccounts: { name: string; phone: string; note: string }[] }>('/config'),
   login: (name: string, phone: string) => req<{ token: string } & Omit<Me, 'sessions'>>('/auth/login', { method: 'POST', body: { name, phone } }),
+  register: (body: { name: string; email: string; phone: string; pin: string }) => req<{ token: string }>('/auth/register', { method: 'POST', body }),
+  accountLogin: (id: string, pin: string) => req<{ token: string }>('/auth/account-login', { method: 'POST', body: { id, pin } }),
   me: () => req<Me>('/me'),
   createSession: (body: Record<string, unknown>) => req<{ slug: string }>('/sessions', { method: 'POST', body }),
   session: (slug: string) => req<{ session: Session; role: Role; playerId: string | null }>(`/s/${slug}`, { slug }),

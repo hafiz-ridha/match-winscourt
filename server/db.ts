@@ -30,6 +30,15 @@ db.exec(`
     session_id TEXT NOT NULL,
     player_id TEXT NOT NULL
   );
+  -- Akun umum (tanpa booking Wins Court): login no. HP / email + PIN 6 digit.
+  -- Terhubung ke baris hosts lewat host_id (no. HP sama = identitas host yang sama).
+  CREATE TABLE IF NOT EXISTS accounts (
+    host_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    pin_hash TEXT NOT NULL,
+    pin_salt TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 export interface Host {
@@ -54,6 +63,34 @@ export const hosts = {
     return hosts.byPhone(h.phone)!;
   },
 };
+
+export interface Account {
+  host_id: string;
+  email: string;
+  pin_hash: string;
+  pin_salt: string;
+}
+
+export const accounts = {
+  byHost(hostId: string): Account | undefined {
+    return db.prepare('SELECT host_id, email, pin_hash, pin_salt FROM accounts WHERE host_id = ?').get(hostId) as Account | undefined;
+  },
+  byEmail(email: string): Account | undefined {
+    return db.prepare('SELECT host_id, email, pin_hash, pin_salt FROM accounts WHERE email = ?').get(email) as Account | undefined;
+  },
+  create(a: Account) {
+    db.prepare('INSERT INTO accounts (host_id, email, pin_hash, pin_salt, created_at) VALUES (?, ?, ?, ?, ?)').run(
+      a.host_id,
+      a.email,
+      a.pin_hash,
+      a.pin_salt,
+      Date.now(),
+    );
+  },
+};
+
+export const hostById = (id: string): Host | undefined =>
+  db.prepare('SELECT id, name, phone, token FROM hosts WHERE id = ?').get(id) as Host | undefined;
 
 export const sessions = {
   get(slug: string): Session | undefined {

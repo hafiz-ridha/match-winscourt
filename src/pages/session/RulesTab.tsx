@@ -74,7 +74,7 @@ export function RulesTab({ ctx }: { ctx: Ctx }) {
           ))}
         </div>
         <p className="small mute">
-          {s.courts} lapangan · {s.teamSize === 1 ? 'tunggal (1 lawan 1)' : 'ganda (2 lawan 2)'} · Wins Court, Maguwoharjo
+          {s.courts} lapangan · {s.teamSize === 1 ? 'tunggal (1 lawan 1)' : 'ganda (2 lawan 2)'}{s.bookingId.startsWith('MANUAL-') ? '' : ' · Wins Court, Maguwoharjo'}
         </p>
       </section>
 
