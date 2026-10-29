@@ -21,25 +21,8 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --font: 'Inter', system-ui, sans-serif;
   --display: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0f0d;
-    --surface: #141c19;
-    --card: #0e1714;
-    --hairline: #26302c;
-    --text: #fafaf7;
-    --mute: #a3aaa6;
-    --whisper: #6b736f;
-    --lime-deep: #c6ff3d;
-    --danger-bg: #2a1015;
-    --warn-bg: #2a2010;
-    --warn: #fbbf24;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 24px 60px -30px rgba(0, 0, 0, 0.6);
-    color-scheme: dark;
-  }
+  /* Selalu terang seperti wins-court.com, tidak mengikuti mode gelap perangkat. */
+  color-scheme: only light;
 }
 
 * {
@@ -364,16 +347,6 @@ p {
   background: var(--danger);
   animation: pulse 1.6s infinite;
 }
-@media (prefers-color-scheme: dark) {
-  .chip-mint {
-    color: #5fe0ad;
-  }
-  .chip-padel {
-    color: var(--lime);
-    background: rgba(198, 255, 61, 0.14);
-  }
-}
-
 /* ---------- forms ---------- */
 .field {
   display: flex;
@@ -1423,11 +1396,6 @@ details.adv[open] summary .chev {
   flex-wrap: wrap;
   gap: 4px;
 }
-@media (prefers-color-scheme: dark) {
-  .up-court-badge {
-    color: #5fe0ad;
-  }
-}
 .court-art .court-player {
   animation: fade 0.5s var(--ease) both;
 }
@@ -1618,12 +1586,4 @@ details.adv[open] summary .chev {
 .btn-lg {
   min-height: 58px;
   font-size: 17px;
-}
-@media (prefers-color-scheme: dark) {
-  .team-tag.team-a {
-    color: #5fe0ad;
-  }
-  .team-tag.team-b {
-    color: var(--lime);
-  }
 }
