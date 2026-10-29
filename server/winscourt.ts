@@ -1,7 +1,7 @@
 /**
  * Integrasi Wins Court: hanya login penyewa (nama + no. HP) dan jam main booking.
  *
- * Mode asli: set WINSCOURT_API_URL (mis. https://wins-court.com/api/v1/booking-login.php) dan WINSCOURT_API_KEY.
+ * Mode asli: set WINSCOURT_API_URL (mis. https://wins-court.com/api/v1/booking-login) dan WINSCOURT_API_KEY.
  * Endpoint menerima POST {nama, no_hp} dan mengembalikan
  *   [{booking_id, olahraga, lapangan[], tanggal, jam_mulai, jam_selesai}]
  * Tanpa env tersebut, server memakai data booking contoh (mock).

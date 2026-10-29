@@ -46,7 +46,7 @@ Login penyewa memakai 1 endpoint di wins-court.com. Spesifikasi, perintah untuk 
 contoh PHP, dan cara uji ada di [api-match.md](api-match.md). Setelah endpoint siap, isi `.env`:
 
 ```env
-WINSCOURT_API_URL=https://wins-court.com/api/v1/booking-login.php
+WINSCOURT_API_URL=https://wins-court.com/api/v1/booking-login
 WINSCOURT_API_KEY=...
 ```
 
