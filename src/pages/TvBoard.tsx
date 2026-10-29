@@ -38,13 +38,13 @@ export function TvBoard() {
     <div className="tv">
       <div className="row-between">
         <div>
-          <div className="eyebrow" style={{ color: 'var(--lime)' }}>
+          <div className="eyebrow" style={{ color: 'var(--lime-deep)' }}>
             match.wins-court.com · {formatInfo(s.format).name}
           </div>
           <h1 style={{ fontSize: 48 }}>{s.name}</h1>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div className="num" style={{ fontSize: 40, fontWeight: 800, color: over ? '#fb7185' : 'var(--lime)' }}>
+          <div className="num" style={{ fontSize: 40, fontWeight: 800, color: over ? 'var(--danger)' : 'var(--lime-deep)' }}>
             {over ? `+${fmtDuration(now - end)}` : fmtDuration(end - now)}
           </div>
           <div className="mute">{over ? `Jam main habis ${fmtTime(s.end)}` : `Jam main sampai ${fmtTime(s.end)}`}</div>
@@ -78,13 +78,13 @@ export function TvBoard() {
                     <div style={{ fontSize: 24, fontWeight: 600, maxWidth: '35%' }}>{teamNames(s, m.a)}</div>
                     <div className="tvscore">
                       {sc.a}
-                      <span style={{ color: '#6b736f' }}>:</span>
+                      <span style={{ color: 'var(--whisper)' }}>:</span>
                       {sc.b}
                     </div>
                     <div style={{ fontSize: 24, fontWeight: 600, maxWidth: '35%', textAlign: 'right' }}>{teamNames(s, m.b)}</div>
                   </div>
                   {sc.gameA !== undefined && (
-                    <div className="center num" style={{ fontSize: 28, color: 'var(--lime)', fontWeight: 800 }}>
+                    <div className="center num" style={{ fontSize: 28, color: 'var(--lime-deep)', fontWeight: 800 }}>
                       {sc.gameA} – {sc.gameB}
                     </div>
                   )}
@@ -113,7 +113,7 @@ export function TvBoard() {
             {top.map((x, i) => (
               <div key={x.id} className="row-between" style={{ fontSize: 24 }}>
                 <span>
-                  <b className="num" style={{ color: i === 0 ? 'var(--lime)' : '#6b736f', marginRight: 12 }}>
+                  <b className="num" style={{ color: i === 0 ? 'var(--lime-deep)' : 'var(--whisper)', marginRight: 12 }}>
                     {i + 1}
                   </b>
                   {x.name}
