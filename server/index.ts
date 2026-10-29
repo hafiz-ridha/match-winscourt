@@ -333,6 +333,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const port = Number(process.env.PORT ?? 8787);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`match.wins-court.com API di http://localhost:${port} ${isMock ? '(data booking: MOCK)' : ''}`);
 });
+// Koneksi keep-alive dipertahankan lebih lama dari browser/proxy (default Node 5 dtk):
+// mencegah Safari memakai ulang koneksi yang sudah ditutup server ("network connection was lost").
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;

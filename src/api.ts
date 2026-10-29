@@ -53,11 +53,21 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; slu
     const rk = auth.refKey(opts.slug);
     if (rk) headers['x-ref-key'] = rk;
   }
+  const method = opts.method ?? 'GET';
+  const send = () => fetch(`/api${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
   let res: Response;
   try {
-    res = await fetch(`/api${path}`, { method: opts.method ?? 'GET', headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+    res = await send();
   } catch {
-    throw new Error('Tidak ada koneksi. Coba lagi.');
+    // Koneksi putus sesaat (mis. Safari memakai koneksi keep-alive yang sudah ditutup):
+    // permintaan baca aman diulang sekali. Aksi (POST) tidak diulang agar tidak tercatat dua kali.
+    if (method !== 'GET') throw new Error('Tidak ada koneksi. Coba lagi.');
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      res = await send();
+    } catch {
+      throw new Error('Tidak ada koneksi. Coba lagi.');
+    }
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

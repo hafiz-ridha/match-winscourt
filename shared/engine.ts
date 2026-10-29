@@ -14,6 +14,9 @@ interface History {
   opp: Map<string, number>;
 }
 
+/** Elemen terakhir array (pengganti at(-1), yang baru ada di Safari 15.4). */
+const lastOf = <T,>(arr: T[]): T | undefined => arr[arr.length - 1];
+
 const key = (x: string, y: string) => (x < y ? `${x}|${y}` : `${y}|${x}`);
 const inc = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
 
@@ -272,7 +275,7 @@ function winnerOf(s: Session, m: Match): Side {
 }
 
 function genKoth(s: Session, n: number): Round | null {
-  const prev = s.rounds.at(-1);
+  const prev = lastOf(s.rounds);
   if (!prev || !prev.matches.length) return genStatic(s, n);
   const active = activePlayers(s).map((p) => p.id);
   const per = s.teamSize * 2;
@@ -333,7 +336,7 @@ function winStreak(s: Session, court: number, team: string[]): number {
 }
 
 function genWinnerStays(s: Session, n: number): Round | null {
-  const prev = s.rounds.at(-1);
+  const prev = lastOf(s.rounds);
   if (!prev) return genStatic(s, n);
   const active = activePlayers(s).map((p) => p.id);
   const h = history(s.rounds);
@@ -484,7 +487,7 @@ export function advanceBracket(s: Session): void {
     return;
   }
   const ko = b.matches.filter((m) => !m.stage.startsWith('Grup') && m.stage !== 'Perebutan juara 3');
-  const lastStage = ko.at(-1)?.stage;
+  const lastStage = lastOf(ko)?.stage;
   if (!lastStage) return;
   const current = ko.filter((m) => m.stage === lastStage);
   if (current.some((m) => !m.winner)) return;
@@ -527,7 +530,7 @@ function genBracket(s: Session, n: number): Round | null {
 /* ------------------------------------------------------------------ */
 
 export function generateRound(s: Session): Round | null {
-  const n = (s.rounds.at(-1)?.n ?? 0) + 1;
+  const n = (lastOf(s.rounds)?.n ?? 0) + 1;
   switch (s.format) {
     case 'mexicano':
     case 'mixicano':
