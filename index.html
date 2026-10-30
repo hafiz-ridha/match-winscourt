@@ -46,11 +46,17 @@
             'style="border:0;border-radius:999px;background:#C6FF3D;color:#0E1714;font-weight:700;font-size:15px;padding:14px 28px">Muat ulang</button>' +
             '<div style="font-size:11px;color:#8E948F;margin-top:16px;word-break:break-word">' + (detail || '') + '</div></div>';
         }
+        // Hanya script aplikasi sendiri (/assets/… di domain ini). Script pihak ketiga yang diblokir
+        // Safari (mis. analitik Cloudflare) TIDAK boleh memicu muat ulang — itu menyebabkan loop.
+        function ownAppScript(src) {
+          return !!src && src.indexOf(location.origin + '/assets/') === 0;
+        }
         window.addEventListener(
           'error',
           function (e) {
             var t = e.target;
             if (t && t.tagName === 'SCRIPT') {
+              if (mounted() || !ownAppScript(t.src)) return;
               if (!hardReload()) fallback('Script gagal dimuat: ' + (t.src || ''));
             } else if (!mounted()) {
               setTimeout(function () {
