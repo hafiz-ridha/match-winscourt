@@ -211,98 +211,143 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
   ctx.fillRect(0, 0, W, H);
 
   const font = (wgt: number, size: number) => `${wgt} ${size}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  /** Merek "Wins Court": Wins putih, Court lime. */
   const brand = (x: number, y: number, size: number) => {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.font = font(800, size);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('match.', x, y);
-    const w1 = ctx.measureText('match.').width;
+    ctx.fillText('Wins ', x, y);
     ctx.fillStyle = LIME;
-    ctx.fillText('wins-court.com', x + w1, y);
+    ctx.fillText('Court', x + ctx.measureText('Wins ').width, y);
+  };
+  const footer = (y: number, size: number) => {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = font(800, size);
+    ctx.fillStyle = LIME;
+    ctx.fillText('wins-court.com', W / 2, y);
   };
 
   if (layout === 'portrait') {
-    // Cahaya lime lembut di atas (gaya wins-court.com).
-    const g = ctx.createRadialGradient(W / 2, 0, 10, W / 2, 0, W * 0.9);
-    g.addColorStop(0, 'rgba(198,255,61,0.18)');
-    g.addColorStop(1, 'rgba(198,255,61,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H * 0.5);
-    brand(40, 78, 34);
-    ctx.font = font(600, 22);
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.fillText(r.title, 40, 116);
-    pill(ctx, W - 100, 66, 'ANALISIS RELI', LIME, INK, 16);
+    const vw0 = video.videoWidth || 1280;
+    const vh0 = video.videoHeight || 720;
+    // Pusat lapangan (dari kalibrasi) jadi titik tengah potongan video.
+    const qx = r.cal.quad.map((p) => p.x);
+    const cMin = Math.min(...qx);
+    const cMax = Math.max(...qx);
+    const cx = (cMin + cMax) / 2;
 
-    const vy = 150;
-    let vw = W;
-    let vh = W / va;
-    if (vh > 560) {
-      vh = 560;
-      vw = vh * va;
+    // 1) Latar penuh 9:16: video di-zoom menutupi seluruh layar, digelapkan.
+    const sBg = Math.max(W / vw0, H / vh0);
+    const bw = vw0 * sBg;
+    const bh = vh0 * sBg;
+    const bx = Math.min(0, Math.max(W - bw, W / 2 - cx * bw));
+    const by = (H - bh) / 2;
+    ctx.drawImage(video, bx, by, bw, bh);
+
+    // 2) Video horizontal: lapangan di-zoom selebar layar di tengah (video vertikal sudah penuh di langkah 1).
+    let ox = bx;
+    let oy = by;
+    let ow = bw;
+    let oh = bh;
+    if (va > 0.8) {
+      ctx.fillStyle = 'rgba(14,23,20,0.62)';
+      ctx.fillRect(0, 0, W, H);
+      const sFit = Math.min(W / ((cMax - cMin + 0.14) * vw0), (H * 0.6) / vh0);
+      ow = vw0 * Math.max(W / vw0, sFit);
+      oh = (ow / vw0) * vh0;
+      ox = Math.min(0, Math.max(W - ow, W / 2 - cx * ow));
+      oy = H * 0.47 - oh / 2;
+      ctx.drawImage(video, ox, oy, ow, oh);
     }
-    const vx = (W - vw) / 2;
-    ctx.drawImage(video, vx, vy, vw, vh);
-    drawOverlay(ctx, r, fi, vx, vy, vw, vh);
+    drawOverlay(ctx, r, fi, ox, oy, ow, oh);
 
-    // Penghitung besar.
-    const ty = vy + vh + 40;
+    // Gradasi gelap atas & bawah supaya teks terbaca di atas video.
+    const top = ctx.createLinearGradient(0, 0, 0, 300);
+    top.addColorStop(0, 'rgba(14,23,20,0.92)');
+    top.addColorStop(1, 'rgba(14,23,20,0)');
+    ctx.fillStyle = top;
+    ctx.fillRect(0, 0, W, 300);
+    const rows = Math.ceil(st.players.length / 2);
+    const ch = rows > 1 ? 132 : 150;
+    const gap = 14;
+    const cardsTop = H - 92 - rows * ch - (rows - 1) * gap;
+    const bot = ctx.createLinearGradient(0, cardsTop - 140, 0, H);
+    bot.addColorStop(0, 'rgba(14,23,20,0)');
+    bot.addColorStop(0.35, 'rgba(14,23,20,0.78)');
+    bot.addColorStop(1, 'rgba(14,23,20,0.95)');
+    ctx.fillStyle = bot;
+    ctx.fillRect(0, cardsTop - 140, W, H - cardsTop + 140);
+
+    // Header: Wins Court + judul + label.
+    brand(40, 82, 42);
+    ctx.font = font(600, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText(clip(ctx, r.title, W - 80), 40, 118);
+    pill(ctx, W - 108, 70, 'ANALISIS RELI', LIME, INK, 16);
+
+    // Penghitung (kiri atas) + peta mini (kanan atas).
     ctx.textAlign = 'left';
-    ctx.font = font(800, 76);
+    ctx.font = font(800, 64);
     ctx.fillStyle = LIME;
-    ctx.fillText(String(totalHits), 40, ty + 62);
-    ctx.font = font(700, 20);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('PUKULAN', 40, ty + 100);
-    ctx.font = font(800, 44);
+    ctx.fillText(String(totalHits), 40, 196);
+    const hw = ctx.measureText(String(totalHits)).width;
+    ctx.font = font(700, 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillText('PUKULAN', 40, 224);
+    ctx.font = font(800, 40);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(String(st.rallies), 210, ty + 62);
-    ctx.font = font(700, 20);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('RELI', 210, ty + 100);
-    drawMiniCourt(ctx, r, fi, W - 230, ty - 10, 200, 300);
+    const rx = Math.max(200, 40 + hw + 48);
+    ctx.fillText(String(st.rallies), rx, 196);
+    ctx.font = font(700, 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillText('RELI', rx, 224);
+    ctx.fillStyle = 'rgba(14,23,20,0.72)';
+    roundRect(ctx, W - 172, 150, 136, 214, 18);
+    ctx.fill();
+    drawMiniCourt(ctx, r, fi, W - 172, 150, 136, 214);
 
-    // Kartu pemain.
-    const cy0 = Math.max(ty + 130, ty + 300);
-    const n = r.tracks.length;
-    const cols = 2;
-    const gap = 16;
-    const cw = (W - 80 - gap) / cols;
-    const ch = n > 2 ? 150 : 170;
+    // Kartu pemain melayang di bawah.
+    const cw = (W - 80 - gap) / 2;
     st.players.forEach((p, i) => {
-      const x = 40 + (i % cols) * (cw + gap);
-      const y = cy0 + Math.floor(i / cols) * (ch + gap);
-      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      const x = 40 + (i % 2) * (cw + gap);
+      const y = cardsTop + Math.floor(i / 2) * (ch + gap);
+      ctx.fillStyle = 'rgba(14,23,20,0.72)';
       roundRect(ctx, x, y, cw, ch, 22);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
       ctx.fillStyle = PLAYER_COLORS[i % 4];
       ctx.beginPath();
-      ctx.arc(x + 28, y + 34, 9, 0, Math.PI * 2);
+      ctx.arc(x + 26, y + 32, 8, 0, Math.PI * 2);
       ctx.fill();
-      ctx.font = font(800, 24);
+      ctx.font = font(800, 22);
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'left';
-      ctx.fillText(clip(ctx, r.names[i] ?? `Pemain ${i + 1}`, cw - 70), x + 46, y + 43);
+      ctx.fillText(clip(ctx, r.names[i] ?? `Pemain ${i + 1}`, cw - 64), x + 42, y + 40);
       const stats: [string, string][] = [
         [String(p.hits), 'pukulan'],
         [fmt1(p.distance), 'meter'],
       ];
       if (showKcal) stats.push([fmt1(p.kcal), 'kkal']);
-      const sw = (cw - 40) / stats.length;
+      const sw = (cw - 36) / stats.length;
       stats.forEach(([v, l], k) => {
-        ctx.font = font(800, 36);
+        ctx.font = font(800, 32);
         ctx.fillStyle = k === 0 ? LIME : '#ffffff';
-        ctx.fillText(v, x + 22 + k * sw, y + ch - 46);
-        ctx.font = font(600, 17);
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.fillText(l, x + 22 + k * sw, y + ch - 20);
+        ctx.fillText(v, x + 20 + k * sw, y + ch - 42);
+        ctx.font = font(600, 16);
+        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.fillText(l, x + 20 + k * sw, y + ch - 18);
       });
     });
-    ctx.font = font(600, 16);
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.textAlign = 'center';
-    ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 28);
+
+    // Footer: wins-court.com di paling bawah.
+    footer(H - 38, 30);
+    ctx.font = font(600, 13);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 14);
   } else {
     let vw = W;
     let vh = W / va;
@@ -350,6 +395,7 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.textAlign = 'left';
     ctx.fillText('Beta · perkiraan AI', 28, H - 22);
+    footer(H - 22, 22);
   }
 }
 

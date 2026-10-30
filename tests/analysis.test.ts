@@ -27,6 +27,7 @@ const cal: Calib = {
   aspect: 16 / 9,
 };
 const { toImage, spec } = calibMaps(cal);
+const padelCal: Calib = { ...cal, sport: 'padel' };
 
 test('homografi: 4 sudut terpetakan tepat & bolak-balik konsisten', () => {
   const src = cal.quad;
@@ -47,8 +48,8 @@ test('homografi: 4 sudut terpetakan tepat & bolak-balik konsisten', () => {
 });
 
 /** Pose sintetis untuk pemain berdiri di titik lapangan c; wrist = posisi tangan (gambar). */
-function pose(c: Pt, wrist?: Pt): PoseObs {
-  const foot = toImage(c);
+function pose(c: Pt, wrist?: Pt, map: (p: Pt) => Pt = toImage): PoseObs {
+  const foot = map(c);
   const hgt = 0.12 * (0.5 + foot.y); // pemain jauh tampak lebih kecil
   const box = { x: foot.x - hgt * 0.2, y: foot.y - hgt, w: hgt * 0.4, h: hgt };
   const w = wrist ?? { x: foot.x + hgt * 0.15, y: foot.y - hgt * 0.55 };
@@ -68,17 +69,20 @@ function pose(c: Pt, wrist?: Pt): PoseObs {
  * Reli tunggal sintetis 15 fps: pemain dekat (slot 0) & jauh (slot 1) bergantian memukul tiap 1 detik.
  * Kok bergerak lurus di gambar dari tangan pemukul ke tangan penerima.
  */
-function rally(nHits: number) {
+function rally(nHits: number, sport: 'badminton' | 'padel' = 'badminton') {
+  const map = sport === 'padel' ? calibMaps(padelCal).toImage : toImage;
+  const L = sport === 'padel' ? 20 : 13.4;
   const fps = 15;
   const per = 15; // frame per pukulan
   const frames: FrameObs[] = [];
-  const nearPos = (f: number): Pt => ({ x: 3 + Math.sin(f / 9) * 1.2, y: 11 + Math.cos(f / 13) * 1.0 });
-  const farPos = (f: number): Pt => ({ x: 3 + Math.cos(f / 11) * 1.2, y: 2.5 + Math.sin(f / 7) * 1.0 });
+  const cx = sport === 'padel' ? 5 : 3;
+  const nearPos = (f: number): Pt => ({ x: cx + Math.sin(f / 9) * 1.2, y: L * 0.82 + Math.cos(f / 13) * 1.0 });
+  const farPos = (f: number): Pt => ({ x: cx + Math.cos(f / 11) * 1.2, y: L * 0.19 + Math.sin(f / 7) * 1.0 });
   const hand = (p: PoseObs) => ({ x: p.box.x + p.box.w * 0.9, y: p.box.y + p.box.h * 0.1 });
   const total = nHits * per + 10;
   for (let f = 0; f < total; f++) {
-    const near = pose(nearPos(f));
-    const far = pose(farPos(f));
+    const near = pose(nearPos(f), undefined, map);
+    const far = pose(farPos(f), undefined, map);
     const k = Math.floor(f / per);
     const r = (f % per) / per;
     const from = k % 2 === 0 ? near : far;
@@ -88,7 +92,9 @@ function rally(nHits: number) {
       const a = hand(from);
       const b = hand(to);
       // Lengkung: kok naik dulu (y gambar mengecil) lalu turun.
-      const s = { x: a.x + (b.x - a.x) * r, y: a.y + (b.y - a.y) * r - Math.sin(Math.PI * r) * 0.12 };
+      let s = { x: a.x + (b.x - a.x) * r, y: a.y + (b.y - a.y) * r - Math.sin(Math.PI * r) * 0.12 };
+      // Padel: bola memantul di lantai pada 70% lintasan (belokan tajam jauh dari tangan).
+      if (sport === 'padel' && r > 0.6 && r < 0.8) s = { x: s.x, y: s.y + (0.7 - Math.abs(r - 0.7)) * 0.15 };
       blobs.push({ x: s.x, y: s.y, area: 6 });
       // Tangan pemukul tepat di kok saat memukul.
       if (f % per === 0) from.wristR = { ...s };
@@ -184,4 +190,23 @@ test('ganda: 4 slot stabil (kiri/kanan tiap sisi) walau urutan deteksi acak', ()
     const b = t.frames[i];
     if (a && b) assert.ok(Math.hypot(a.court.x - b.court.x, a.court.y - b.court.y) < 0.6, 'tidak ada lompatan antar pemain');
   }
+});
+
+test('padel: pukulan terdeteksi, pantulan bola di lantai tidak dihitung', () => {
+  const n = 8;
+  const { frames, per } = rally(n, 'padel');
+  const tracks = trackPlayers(frames, padelCal, 1);
+  for (const f of tracks[0].frames) if (f) assert.ok(f.court.y > 10, 'slot 0 sisi dekat');
+  const shuttle = trackShuttle(frames, tracks, padelCal.aspect);
+  const hits = detectHits(frames, tracks, shuttle, 'padel', 1);
+  assert.ok(hits.length >= n - 2 && hits.length <= n + 1, `jumlah pukulan ${hits.length}`);
+  for (const h of hits) {
+    const k = Math.round(h.frame / per);
+    assert.ok(Math.abs(h.frame - k * per) <= 2, `frame pukulan ${h.frame} (bukan pantulan)`);
+  }
+  for (let i = 1; i < hits.length; i++) assert.notEqual(hits[i].player, hits[i - 1].player);
+  assert.equal(hits[0].type, 'servis');
+  for (const h of hits) assert.ok(['servis', 'smash', 'bandeja', 'volley', 'lob', 'dasar'].includes(h.type), h.type);
+  const st = summarize(frames, tracks, hits, 'padel', 1, [70, 70]);
+  assert.ok(st.players[0].distance > 2 && st.players[0].distance < 60);
 });

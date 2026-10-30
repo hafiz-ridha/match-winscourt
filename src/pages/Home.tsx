@@ -8,10 +8,30 @@ import { CourtArt } from '../components/CourtArt.tsx';
 import { Arrow, Ball, Court, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, SportChip, useRun } from '../components/ui.tsx';
 
+const NEXT_KEY = 'mwc.next';
+/** Simpan halaman tujuan sebelum diarahkan ke login. */
+export function loginThen(path: string) {
+  try {
+    sessionStorage.setItem(NEXT_KEY, path);
+  } catch {
+    /* mode privat */
+  }
+}
+function takeNext(): string | null {
+  try {
+    const v = sessionStorage.getItem(NEXT_KEY);
+    sessionStorage.removeItem(NEXT_KEY);
+    return v && v.startsWith('/') && !v.startsWith('//') ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export function Home() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(!!auth.token);
   const [loggedIn, setLoggedIn] = useState(!!auth.token);
+  const nav = useNavigate();
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -26,7 +46,17 @@ export function Home() {
       .finally(() => setLoading(false));
   }, [loggedIn]);
 
-  if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
+  if (!loggedIn)
+    return (
+      <Login
+        onDone={() => {
+          // Datang dari halaman yang wajib login (mis. Analisis reli) → kembali ke sana.
+          const next = takeNext();
+          if (next) nav(next);
+          else setLoggedIn(true);
+        }}
+      />
+    );
   if (loading || !me) return <Loader text="Memuat booking kamu…" />;
   return (
     <HostHome
@@ -296,7 +326,7 @@ function Login({ onDone }: { onDone: () => void }) {
             <h3>
               Analisis reli <span className="beta-tag">BETA</span>
             </h3>
-            <p className="small mute">Upload video main, AI melacak pemain & kok: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
+            <p className="small mute">Upload video main, AI melacak pemain & kok/bola: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
           </div>
         </div>
       </Link>

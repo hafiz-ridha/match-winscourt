@@ -111,7 +111,7 @@ export function Switch({ on, onChange, label, hint }: { on: boolean; onChange: (
   );
 }
 
-export function Seg<T extends string | number>({ value, options, onChange }: { value: T; options: { v: T; label: string }[]; onChange: (v: T) => void }) {
+export function Seg<T extends string | number>({ value, options, onChange }: { value: T; options: { v: T; label: ReactNode }[]; onChange: (v: T) => void }) {
   return (
     <div className="seg" role="radiogroup">
       {options.map((o) => (

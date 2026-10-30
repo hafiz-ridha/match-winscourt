@@ -24,6 +24,9 @@ export interface CourtSpec {
   centerFromNet: number;
 }
 
+/** Jeda tanpa pukulan (detik) yang dianggap reli baru. Padel lebih lama: lob & pantulan dinding kaca. */
+export const RALLY_GAP: Record<Sport, number> = { badminton: 2.5, padel: 3.5 };
+
 export const COURTS: Record<Sport, CourtSpec> = {
   badminton: { sport: 'badminton', W: 6.1, L: 13.4, serviceFromNet: 1.98, longServiceFromBase: 0.76, centerFromNet: 1.98 },
   padel: { sport: 'padel', W: 10, L: 20, serviceFromNet: 6.95, longServiceFromBase: 0, centerFromNet: 0 },
@@ -503,6 +506,8 @@ export function detectHits(frames: FrameObs[], tracks: Track[], shuttle: (Pt | n
       }
     });
     if (best < 0) {
+      // Padel: bola memantul di lantai & dinding kaca → belokan tanpa tangan di dekatnya bukan pukulan.
+      if (sport === 'padel') continue;
       // Tidak ada tangan di dekat kok: tentukan sisi dari arah datang kok (turun di gambar = menuju sisi dekat).
       const side = before.y > 0 ? 'near' : 'far';
       let bs = 0;
@@ -542,7 +547,7 @@ export function detectHits(frames: FrameObs[], tracks: Track[], shuttle: (Pt | n
     } else merged.push(c);
   }
   // Wajib bergantian sisi net dalam satu reli; buang yang lebih lemah bila dua berturut di sisi sama.
-  const rallyGap = Math.round(2.5 / dt);
+  const rallyGap = Math.round(RALLY_GAP[sport] / dt);
   const alt: Cand[] = [];
   for (const c of merged) {
     const prev = alt[alt.length - 1];
@@ -581,13 +586,13 @@ export function classifyAll(hits: Hit[], frames: { t: number }[], tracks: Track[
     if (keep?.has(h.id)) return;
     const prev = hits[i - 1];
     const next = hits[i + 1];
-    const first = !prev || h.t - prev.t > 2.5;
+    const first = !prev || h.t - prev.t > RALLY_GAP[sport];
     if (first) {
       h.type = 'servis';
       return;
     }
     const f = nearestFrame(tracks[h.player], h.frame);
-    const flight = next && next.t - h.t < 2.5 ? next.t - h.t : 1.4;
+    const flight = next && next.t - h.t < RALLY_GAP[sport] ? next.t - h.t : 1.4;
     const overhead = f ? Math.min(f.wristL.y, f.wristR.y) < f.noseY : false;
     const depth = f ? (isNearSlot(h.player, teamSize) ? f.court.y - spec.L / 2 : spec.L / 2 - f.court.y) : spec.L / 4;
     const front = depth < (spec.L / 2) * 0.33;
@@ -722,7 +727,7 @@ export function summarize(frames: { t: number }[], tracks: Track[], hits: Hit[],
   let longest = 0;
   let cur = 0;
   sorted.forEach((h, i) => {
-    if (i === 0 || h.t - sorted[i - 1].t > 2.5) {
+    if (i === 0 || h.t - sorted[i - 1].t > RALLY_GAP[sport]) {
       rallies++;
       cur = 0;
     }

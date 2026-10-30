@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../api.ts';
+import { api, auth } from '../api.ts';
 import {
   calibMaps,
   classifyAll,
@@ -23,8 +23,9 @@ import {
 } from '../analysis/core.ts';
 import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Result } from '../analysis/render.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
-import { Back, Download, Info, Share, Swap } from '../components/Icons.tsx';
-import { Brand, Seg, Switch, useToast } from '../components/ui.tsx';
+import { Back, Ball, Download, Info, Lock, Share, Shuttle, Swap } from '../components/Icons.tsx';
+import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
+import { loginThen } from './Home.tsx';
 
 const FPS = 15;
 const STEPS = ['Video', 'Lapangan', 'Proses', 'Periksa', 'Hasil'];
@@ -52,7 +53,47 @@ interface Setup {
   from?: { slug: string; matchId: string };
 }
 
+/** Analisis reli khusus pengguna yang sudah login (penyewa Wins Court atau akun umum). */
 export function Analysis() {
+  const [state, setState] = useState<'checking' | 'in' | 'out'>(auth.token ? 'checking' : 'out');
+  useEffect(() => {
+    if (!auth.token) return;
+    api
+      .me()
+      .then(() => setState('in'))
+      .catch(() => setState(auth.token ? 'in' : 'out'));
+  }, []);
+  if (state === 'checking') return <Loader text="Memeriksa akun…" />;
+  if (state === 'out') return <LoginGate />;
+  return <AnalysisApp />;
+}
+
+function LoginGate() {
+  const next = location.pathname + location.search;
+  return (
+    <div className="app an stack-lg">
+      <div className="topbar">
+        <Link to="/" className="icon-btn" aria-label="Kembali">
+          <Back size={20} />
+        </Link>
+        <Brand sub="Analisis reli" />
+        <span className="beta-tag">BETA</span>
+      </div>
+      <div className="card stack center" style={{ marginTop: 24, alignItems: 'center' }}>
+        <span className="icon-btn" style={{ background: 'var(--text)', color: 'var(--lime)', borderColor: 'transparent' }}>
+          <Lock size={20} />
+        </span>
+        <h2 style={{ margin: 0 }}>Masuk dulu untuk analisis reli</h2>
+        <p className="small mute">Analisis reli bisa dipakai penyewa Wins Court dan pemilik akun umum. Sesudah masuk, kamu langsung kembali ke sini.</p>
+        <Link to="/" className="btn btn-primary btn-lg btn-block" onClick={() => loginThen(next)}>
+          Masuk / daftar
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function AnalysisApp() {
   const [params] = useSearchParams();
   const toast = useToast();
   const [step, setStep] = useState(0);
@@ -244,8 +285,22 @@ function SetupStep({
                 value={setup.sport}
                 onChange={(v) => setSetup({ ...setup, sport: v })}
                 options={[
-                  { v: 'badminton', label: 'Badminton' },
-                  { v: 'padel', label: 'Padel' },
+                  {
+                    v: 'badminton',
+                    label: (
+                      <span className="an-sport">
+                        <Shuttle size={18} /> Badminton
+                      </span>
+                    ),
+                  },
+                  {
+                    v: 'padel',
+                    label: (
+                      <span className="an-sport">
+                        <Ball size={16} /> Padel
+                      </span>
+                    ),
+                  },
                 ]}
               />
             </div>
@@ -586,7 +641,7 @@ function ProcessStep({
         const obs: FrameObs[] = [];
         const total = Math.max(1, Math.floor((end - start) * FPS));
         const t0 = performance.now();
-        setStatus('Melacak pemain, gerakan, dan kok…');
+        setStatus(`Melacak pemain, gerakan, dan ${cal.sport === 'padel' ? 'bola' : 'kok'}…`);
         for (let i = 0; i < total; i++) {
           while (pausedRef.current && !cancelled.current) await new Promise((r) => setTimeout(r, 200));
           if (cancelled.current) return;
@@ -817,7 +872,7 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
           <span className="chip tiny">{r.hits.length} pukulan</span>
         </div>
         <p className="small mute">
-          Geser garis waktu. Ketuk tanda bulat untuk mengubah pemukul atau jenis pukulan. Ada pukulan terlewat? Berhenti di saat raket kena kok, tekan <b>+</b>. Salah deteksi? Pilih lalu tekan <b>−</b>.
+          Geser garis waktu. Ketuk tanda bulat untuk mengubah pemukul atau jenis pukulan. Ada pukulan terlewat? Berhenti di saat raket kena {r.sport === 'padel' ? 'bola' : 'kok'}, tekan <b>+</b>. Salah deteksi? Pilih lalu tekan <b>−</b>.
         </p>
         <div className="an-player">
           <video ref={video} src={src} playsInline muted preload="auto" onClick={() => (video.current?.paused ? video.current.play() : video.current?.pause())} />
