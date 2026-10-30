@@ -333,7 +333,32 @@ function playerCard(
   name: string,
   p: { hits: number; distance: number; kcal: number },
   showKcal: boolean,
+  compact = false,
 ) {
+  if (compact) {
+    // Versi ringkas (lebar ±150 px): nama, angka pukulan besar, meter & kkal kecil.
+    panel(ctx, x, y, w, h, 16);
+    ctx.fillStyle = PLAYER_COLORS[i % 4];
+    ctx.beginPath();
+    ctx.arc(x + 16, y + 22, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = F(800, 15);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(clip(ctx, name, w - 36), x + 28, y + 27);
+    ctx.font = F(800, 30);
+    ctx.fillStyle = LIME;
+    ctx.fillText(String(p.hits), x + 14, y + 66);
+    const hw = ctx.measureText(String(p.hits)).width;
+    ctx.font = F(600, 11);
+    ctx.fillStyle = 'rgba(255,255,255,0.62)';
+    ctx.fillText('pukulan', x + 18 + hw, y + 66);
+    ctx.font = F(700, 12);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(clip(ctx, `${fmt1(p.distance)} m${showKcal ? ` · ${fmt1(p.kcal)} kkal` : ''}`, w - 24), x + 14, y + h - 14);
+    return;
+  }
   panel(ctx, x, y, w, h, 20);
   ctx.fillStyle = PLAYER_COLORS[i % 4];
   ctx.beginPath();
@@ -361,6 +386,110 @@ function playerCard(
   });
 }
 
+/**
+ * 9:16 dari video vertikal: video jadi latar penuh (tidak dibingkai, tidak digelapkan).
+ * Overlay dikumpulkan di bagian atas (biasanya dinding/atap di atas lapangan jauh) dan satu baris tipis
+ * di bawah, supaya lapangan & pemain tetap terlihat.
+ */
+function drawVerticalPortrait(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  r: Result,
+  fi: number,
+  st: ReturnType<typeof summarize>,
+  totalHits: number,
+  rk: Ranking | null,
+  showKcal: boolean,
+) {
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const M = 32;
+  const G = 12;
+  const vw0 = video.videoWidth || 720;
+  const vh0 = video.videoHeight || 1280;
+  // Latar penuh: video 9:16 pas tanpa potongan (rasio lain dipusatkan, sisa minimal).
+  const s = Math.max(W / vw0, H / vh0);
+  const ow = vw0 * s;
+  const oh = vh0 * s;
+  const ox = (W - ow) / 2;
+  const oy = (H - oh) / 2;
+  ctx.drawImage(video, ox, oy, ow, oh);
+  drawOverlay(ctx, r, fi, ox, oy, ow, oh);
+
+  // Bayangan tipis hanya di tepi atas & bawah (di belakang teks), bukan di tengah video.
+  const gt = ctx.createLinearGradient(0, 0, 0, 260);
+  gt.addColorStop(0, 'rgba(14,23,20,0.7)');
+  gt.addColorStop(1, 'rgba(14,23,20,0)');
+  ctx.fillStyle = gt;
+  ctx.fillRect(0, 0, W, 260);
+  const gb = ctx.createLinearGradient(0, H - 170, 0, H);
+  gb.addColorStop(0, 'rgba(14,23,20,0)');
+  gb.addColorStop(1, 'rgba(14,23,20,0.7)');
+  ctx.fillStyle = gb;
+  ctx.fillRect(0, H - 170, W, 170);
+
+  // Header.
+  brand(ctx, M, 74, 34);
+  pillRight(ctx, W - M, 62, 'AI MATCH ANALYSIS', 13);
+
+  // Strip ringkas: PUKULAN | RELI | peta mini mendatar.
+  const sy = 98;
+  const sh = 80;
+  const SW = W - M * 2;
+  const mapW = 176;
+  panel(ctx, M, sy, SW, sh, 18, 0.72);
+  const statW = (SW - mapW) / 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(M + statW, sy + 16);
+  ctx.lineTo(M + statW, sy + sh - 16);
+  ctx.moveTo(M + statW * 2, sy + 16);
+  ctx.lineTo(M + statW * 2, sy + sh - 16);
+  ctx.stroke();
+  stat(ctx, M + statW / 2, sy + 44, String(totalHits), 'PUKULAN', LIME, 36);
+  stat(ctx, M + statW * 1.5, sy + 44, String(st.rallies), 'RELI', '#ffffff', 36);
+  drawMiniCourt(ctx, r, fi, M + statW * 2 + 4, sy + 3, mapW - 8, sh - 6, true);
+
+  // Peringkat (opsional) di bawah strip, separuh lebar agar tidak menutupi tengah video.
+  if (rk) drawRanking(ctx, rk, M, sy + sh + G, 330, 172);
+
+  // Bawah: satu baris kartu pemain tipis + footer.
+  const n = st.players.length;
+  const cg = 8;
+  const ch = 72;
+  const cw = (W - M * 2 - cg * (n - 1)) / n;
+  const cy = H - 64 - ch;
+  st.players.forEach((p, i) => {
+    const x = M + i * (cw + cg);
+    panel(ctx, x, cy, cw, ch, 14, 0.72);
+    ctx.fillStyle = PLAYER_COLORS[i % 4];
+    ctx.beginPath();
+    ctx.arc(x + 14, cy + 20, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = F(800, 14);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(clip(ctx, r.names[i] ?? `Pemain ${i + 1}`, cw - 34), x + 26, cy + 25);
+    ctx.font = F(800, 22);
+    ctx.fillStyle = LIME;
+    ctx.fillText(String(p.hits), x + 12, cy + 55);
+    const hw = ctx.measureText(String(p.hits)).width;
+    ctx.font = F(700, 11);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(clip(ctx, `pkl · ${fmt1(p.distance)} m${showKcal ? ` · ${fmt1(p.kcal)} kkal` : ''}`, cw - hw - 22), x + 16 + hw, cy + 54);
+  });
+
+  ctx.textAlign = 'center';
+  ctx.font = F(800, 26);
+  ctx.fillStyle = LIME;
+  ctx.fillText('wins-court.com', W / 2, H - 30);
+  ctx.font = F(600, 11);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 12);
+}
+
 /** Satu frame video ekspor (layout 9:16 atau 16:9) dengan grid & margin konsisten. */
 export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, r: Result, fi: number, layout: 'portrait' | 'landscape', showKcal: boolean) {
   const W = ctx.canvas.width;
@@ -375,14 +504,19 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
   ctx.fillRect(0, 0, W, H);
 
   if (layout === 'portrait') {
+    if (va <= 0.8) {
+      drawVerticalPortrait(ctx, video, r, fi, st, totalHits, rk, showKcal);
+      return;
+    }
     const M = 36;
     const G = 16;
     // Grid (atas → bawah): header | strip ringkas | VIDEO | peringkat (opsional) | kartu pemain | footer.
     // Bagian atas sengaja tipis supaya video & lapangan jadi fokus.
     const stripY = 112;
     const stripH = 92;
-    const rows = Math.ceil(st.players.length / 2);
-    const ch = rows > 1 ? 112 : 132;
+    const cols: number = 2;
+    const rows = Math.ceil(st.players.length / cols);
+    const ch = cols === 4 ? 104 : rows > 1 ? 112 : 132;
     const cardsBottom = H - 88;
     const cardsTop = cardsBottom - rows * ch - (rows - 1) * G;
     const RH = 196;
@@ -397,34 +531,34 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     const cMax = Math.max(...qx);
     const cx = (cMin + cMax) / 2;
 
-    // Latar penuh 9:16 (video di-zoom menutupi layar).
+    // Latar penuh 9:16: video yang sama di-zoom menutupi layar lalu digelapkan,
+    // supaya ruang di sekitar video utama tetap menyatu (bukan pita hitam).
     const sBg = Math.max(W / vw0, H / vh0);
     const bw = vw0 * sBg;
     const bh = vh0 * sBg;
-    const bx = Math.min(0, Math.max(W - bw, W / 2 - cx * bw));
-    const by = (H - bh) / 2;
-    ctx.drawImage(video, bx, by, bw, bh);
-    let ox = bx;
-    let oy = by;
-    let ow = bw;
-    let oh = bh;
-    if (va > 0.8) {
-      // Video horizontal: latar digelapkan, video utama di zona tengah, lapangan diperbesar selebar layar.
-      ctx.fillStyle = 'rgba(14,23,20,0.7)';
-      ctx.fillRect(0, 0, W, H);
-      const sCourt = W / ((cMax - cMin + 0.14) * vw0);
-      const s = Math.min(Math.max(W / vw0, sCourt), zH / vh0);
-      ow = vw0 * s;
-      oh = vh0 * s;
-      ox = ow > W ? Math.min(0, Math.max(W - ow, W / 2 - cx * ow)) : (W - ow) / 2;
-      oy = zTop + (zH - oh) / 2;
-      ctx.save();
-      roundRect(ctx, Math.max(0, ox), oy, Math.min(W, ow), oh, ow >= W ? 0 : 20);
-      ctx.clip();
-      ctx.drawImage(video, ox, oy, ow, oh);
-      ctx.restore();
+    ctx.drawImage(video, Math.min(0, Math.max(W - bw, W / 2 - cx * bw)), (H - bh) / 2, bw, bh);
+    ctx.fillStyle = 'rgba(14,23,20,0.72)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Video utama TIDAK dipotong: dimuat utuh di zona tengah, tidak tertimpa kartu apa pun.
+    const s = Math.min(W / vw0, zH / vh0);
+    const dw = vw0 * s;
+    const dh = vh0 * s;
+    const dx = (W - dw) / 2;
+    const dy = zTop + (zH - dh) / 2;
+    const full = dw >= W - 1;
+    ctx.save();
+    roundRect(ctx, dx, dy, dw, dh, full ? 0 : 22);
+    ctx.clip();
+    ctx.drawImage(video, dx, dy, dw, dh);
+    drawOverlay(ctx, r, fi, dx, dy, dw, dh);
+    ctx.restore();
+    if (!full) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, dx, dy, dw, dh, 22);
+      ctx.stroke();
     }
-    drawOverlay(ctx, r, fi, ox, oy, ow, oh);
 
     // Gradasi tipis atas, lebih pekat di bawah (area kartu).
     const gt = ctx.createLinearGradient(0, 0, 0, zTop);
@@ -432,12 +566,12 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     gt.addColorStop(1, 'rgba(14,23,20,0)');
     ctx.fillStyle = gt;
     ctx.fillRect(0, 0, W, zTop);
-    const gb = ctx.createLinearGradient(0, zBot - 60, 0, H);
+    const gb = ctx.createLinearGradient(0, zBot, 0, H);
     gb.addColorStop(0, 'rgba(14,23,20,0)');
     gb.addColorStop(0.3, 'rgba(14,23,20,0.75)');
     gb.addColorStop(1, 'rgba(14,23,20,0.95)');
     ctx.fillStyle = gb;
-    ctx.fillRect(0, zBot - 60, W, H - zBot + 60);
+    ctx.fillRect(0, zBot, W, H - zBot);
 
     // Header satu baris: merek kiri, label kanan.
     brand(ctx, M, 80, 38);
@@ -464,9 +598,10 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     if (rk) drawRanking(ctx, rk, M, rankTop, SW, RH);
 
     // Kartu pemain.
-    const cw = (W - M * 2 - G) / 2;
+    const cg = cols === 4 ? 10 : G;
+    const cw = (W - M * 2 - cg * (cols - 1)) / cols;
     st.players.forEach((p, i) => {
-      playerCard(ctx, M + (i % 2) * (cw + G), cardsTop + Math.floor(i / 2) * (ch + G), cw, ch, i, r.names[i] ?? `Pemain ${i + 1}`, p, showKcal);
+      playerCard(ctx, M + (i % cols) * (cw + cg), cardsTop + Math.floor(i / cols) * (ch + G), cw, ch, i, r.names[i] ?? `Pemain ${i + 1}`, p, showKcal, cols === 4);
     });
 
     // Footer.
@@ -488,6 +623,13 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     }
     const vx = (W - vw) / 2;
     const vy = (H - vh) / 2;
+    if (vw < W - 1) {
+      // Video vertikal di 16:9: latar video yang sama digelapkan, bukan pita hitam.
+      const sb = Math.max(W / vw0, H / vh0);
+      ctx.drawImage(video, (W - vw0 * sb) / 2, (H - vh0 * sb) / 2, vw0 * sb, vh0 * sb);
+      ctx.fillStyle = 'rgba(14,23,20,0.72)';
+      ctx.fillRect(0, 0, W, H);
+    }
     ctx.drawImage(video, vx, vy, vw, vh);
     drawOverlay(ctx, r, fi, vx, vy, vw, vh);
     const gt = ctx.createLinearGradient(0, 0, 0, 150);
