@@ -1,8 +1,8 @@
-import { StrictMode } from 'react';
+import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import './styles.css';
-import { ToastProvider } from './components/ui.tsx';
+import { Loader, ToastProvider } from './components/ui.tsx';
 import { Home } from './pages/Home.tsx';
 import { CreateSession } from './pages/CreateSession.tsx';
 import { SessionPage } from './pages/SessionPage.tsx';
@@ -11,6 +11,8 @@ import { LocalReferee } from './pages/LocalReferee.tsx';
 import { TvBoard } from './pages/TvBoard.tsx';
 import { Join } from './pages/Join.tsx';
 import { Admin } from './pages/Admin.tsx';
+// Analisis reli dimuat terpisah (berat) hanya saat dibuka.
+const Analysis = lazy(() => import('./pages/Analysis.tsx').then((m) => ({ default: m.Analysis })));
 
 // Aplikasi berhasil dimuat: reset penanda muat-ulang dan rapikan ?_r= dari URL (lihat index.html).
 try {
@@ -50,6 +52,14 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/s/:slug/gabung" element={<Join />} />
           <Route path="/wasit-lokal" element={<LocalReferee />} />
           <Route path="/admin" element={<Admin />} />
+          <Route
+            path="/analisis"
+            element={
+              <Suspense fallback={<Loader text="Memuat analisis…" />}>
+                <Analysis />
+              </Suspense>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

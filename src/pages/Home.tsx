@@ -5,7 +5,7 @@ import type { Booking, Sport } from '../../shared/types.ts';
 import { fmtDate, fmtTime } from '../../shared/util.ts';
 import { api, auth, type Me } from '../api.ts';
 import { CourtArt } from '../components/CourtArt.tsx';
-import { Arrow, Ball, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
+import { Arrow, Ball, Court, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, SportChip, useRun } from '../components/ui.tsx';
 
 export function Home() {
@@ -286,6 +286,20 @@ function Login({ onDone }: { onDone: () => void }) {
           </Link>
         </div>
       </div>
+
+      <Link to="/analisis" className="card card-link stack rise an-home" style={{ animationDelay: '260ms' }}>
+        <div className="row" style={{ alignItems: 'flex-start' }}>
+          <span className="icon-btn" style={{ background: 'var(--lime)', color: 'var(--on-lime)', borderColor: 'transparent' }}>
+            <Court size={20} />
+          </span>
+          <div className="grow">
+            <h3>
+              Analisis reli <span className="beta-tag">BETA</span>
+            </h3>
+            <p className="small mute">Upload video main, AI melacak pemain & kok: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
+          </div>
+        </div>
+      </Link>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { matchScore, requiresWinner } from '../../../shared/standings.ts';
 import type { Match, Session } from '../../../shared/types.ts';
 import { MatchCourt } from '../../components/MatchCourt.tsx';
-import { Edit, Whistle } from '../../components/Icons.tsx';
+import { Court, Edit, Whistle } from '../../components/Icons.tsx';
 import { Sheet, useRun } from '../../components/ui.tsx';
 import { courtName, isMine, nameOf, type Ctx } from './helpers.ts';
 
@@ -108,6 +108,11 @@ export function MatchCard({ ctx, m, compact, roundN, blockedBy = [] }: { ctx: Ct
             <button className="btn btn-ghost btn-xs" disabled={busy} onClick={() => run(() => ctx.act({ type: 'reopenMatch', matchId: m.id }))}>
               Koreksi skor
             </button>
+          )}
+          {(m.status === 'done' || m.status === 'live') && (
+            <Link className="btn btn-ghost btn-xs" to={`/analisis?s=${s.slug}&m=${m.id}`} title="Analisis video match ini (beta)">
+              <Court size={14} /> Analisis video <span className="beta-tag">BETA</span>
+            </Link>
           )}
         </div>
       )}
