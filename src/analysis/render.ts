@@ -5,6 +5,13 @@ export const PLAYER_COLORS = ['#C6FF3D', '#2BC58A', '#38BDF8', '#FB923C'];
 const INK = '#0E1714';
 const LIME = '#C6FF3D';
 
+/** Peringkat dari sesi milik pengguna, ditampilkan di overlay video. */
+export interface Ranking {
+  session: string;
+  sortBy: 'wins' | 'points';
+  rows: { rank: number; name: string; played: number; won: number; lost: number; total: number; inMatch: boolean }[];
+}
+
 export interface Result {
   sport: Sport;
   teamSize: 1 | 2;
@@ -17,6 +24,8 @@ export interface Result {
   names: string[];
   weights: number[];
   title: string;
+  /** Peringkat 5 besar (opsional, null = tidak ditampilkan). */
+  ranking?: Ranking | null;
 }
 
 export const frameAt = (r: Result, t: number) => {
@@ -198,6 +207,67 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/** Panel peringkat sesi (overlay). Mengembalikan tinggi panel. */
+export function drawRanking(ctx: CanvasRenderingContext2D, rk: Ranking, x: number, y: number, w: number, maxRows: number, scale = 1) {
+  const rows = rk.rows.slice(0, Math.max(1, maxRows));
+  // Pemain di match ini yang tidak masuk 5 besar tetap ditampilkan di baris terakhir.
+  const missing = rk.rows.filter((r) => r.inMatch && !rows.includes(r));
+  if (missing.length && rows.length > 1) rows.splice(rows.length - missing.length, missing.length, ...missing.slice(0, rows.length - 1));
+  const rh = 34 * scale;
+  const head = 50 * scale;
+  const h = head + rows.length * rh + 10 * scale;
+  const f = (wgt: number, size: number) => `${wgt} ${size * scale}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  ctx.save();
+  ctx.fillStyle = 'rgba(14,23,20,0.78)';
+  roundRect(ctx, x, y, w, h, 18 * scale);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.font = f(800, 14);
+  ctx.fillStyle = LIME;
+  ctx.fillText('PERINGKAT', x + 16 * scale, y + 24 * scale);
+  ctx.font = f(600, 13);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText(clip(ctx, rk.session, w - 32 * scale), x + 16 * scale, y + 41 * scale);
+  ctx.textAlign = 'right';
+  ctx.font = f(700, 12);
+  ctx.fillText(rk.sortBy === 'wins' ? 'M-K · MENANG' : 'M-K · POIN', x + w - 16 * scale, y + 24 * scale);
+  rows.forEach((r, i) => {
+    const ry = y + head + i * rh;
+    if (r.inMatch) {
+      ctx.fillStyle = 'rgba(198,255,61,0.16)';
+      roundRect(ctx, x + 8 * scale, ry + 2 * scale, w - 16 * scale, rh - 4 * scale, 10 * scale);
+      ctx.fill();
+    }
+    const mid = ry + rh / 2 + 5 * scale;
+    // Lencana peringkat
+    ctx.fillStyle = r.rank <= 3 ? LIME : 'rgba(255,255,255,0.14)';
+    ctx.beginPath();
+    ctx.arc(x + 28 * scale, ry + rh / 2, 11 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = f(800, 13);
+    ctx.fillStyle = r.rank <= 3 ? INK : '#ffffff';
+    ctx.fillText(String(r.rank), x + 28 * scale, mid - 0.5 * scale);
+    ctx.textAlign = 'left';
+    ctx.font = f(r.inMatch ? 800 : 600, 16);
+    ctx.fillStyle = r.inMatch ? LIME : '#ffffff';
+    ctx.fillText(clip(ctx, r.name, w - 170 * scale), x + 48 * scale, mid);
+    ctx.textAlign = 'right';
+    ctx.font = f(600, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.fillText(`${r.won}-${r.lost}`, x + w - 66 * scale, mid);
+    ctx.font = f(800, 17);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(String(rk.sortBy === 'wins' ? r.won : r.total), x + w - 16 * scale, mid);
+  });
+  ctx.restore();
+  return h;
+}
+
 const fmt1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1).replace('.', ',');
 
 /** Satu frame video ekspor (layout 9:16 atau 16:9). */
@@ -285,7 +355,7 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     ctx.font = font(600, 22);
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fillText(clip(ctx, r.title, W - 80), 40, 118);
-    pill(ctx, W - 108, 70, 'ANALISIS RELI', LIME, INK, 16);
+    pill(ctx, W - 108, 70, 'AI MATCH ANALYSIS', LIME, INK, 16);
 
     // Penghitung (kiri atas) + peta mini (kanan atas).
     ctx.textAlign = 'left';
@@ -307,6 +377,13 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     roundRect(ctx, W - 172, 150, 136, 214, 18);
     ctx.fill();
     drawMiniCourt(ctx, r, fi, W - 172, 150, 136, 214);
+
+    // Peringkat sesi (kiri, di bawah penghitung).
+    if (r.ranking?.rows.length) {
+      const avail = cardsTop - 24 - 252;
+      const fit = Math.floor((avail - 60) / 34);
+      drawRanking(ctx, r.ranking, 40, 252, 380, Math.min(5, fit));
+    }
 
     // Kartu pemain melayang di bawah.
     const cw = (W - 80 - gap) / 2;
@@ -386,6 +463,8 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.fillText(`${p.hits} · ${fmt1(p.distance)} m${showKcal ? ` · ${fmt1(p.kcal)} kkal` : ''}`, 24 + pw - 20, y);
     });
+    // Peringkat sesi kanan atas.
+    if (r.ranking?.rows.length) drawRanking(ctx, r.ranking, W - 344, 24, 320, 5, 0.95);
     // Peta mini kanan bawah.
     ctx.fillStyle = 'rgba(14,23,20,0.82)';
     roundRect(ctx, W - 200, H - 300, 176, 276, 20);

@@ -11,7 +11,7 @@ import { LocalReferee } from './pages/LocalReferee.tsx';
 import { TvBoard } from './pages/TvBoard.tsx';
 import { Join } from './pages/Join.tsx';
 import { Admin } from './pages/Admin.tsx';
-// Analisis reli dimuat terpisah (berat) hanya saat dibuka.
+// AI Match Analysis dimuat terpisah (berat) hanya saat dibuka.
 const Analysis = lazy(() => import('./pages/Analysis.tsx').then((m) => ({ default: m.Analysis })));
 
 // Aplikasi berhasil dimuat: reset penanda muat-ulang dan rapikan ?_r= dari URL (lihat index.html).

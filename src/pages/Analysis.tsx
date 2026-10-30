@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, auth } from '../api.ts';
+import { api, auth, type SessionSummary } from '../api.ts';
+import { playerStandings } from '../../shared/standings.ts';
 import {
   calibMaps,
   classifyAll,
@@ -21,7 +22,7 @@ import {
   type Quad,
   type Sport,
 } from '../analysis/core.ts';
-import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Result } from '../analysis/render.ts';
+import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Ranking, type Result } from '../analysis/render.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
 import { Back, Ball, Download, Info, Lock, Share, Shuttle, Swap } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
@@ -53,7 +54,7 @@ interface Setup {
   from?: { slug: string; matchId: string };
 }
 
-/** Analisis reli khusus pengguna yang sudah login (penyewa Wins Court atau akun umum). */
+/** AI Match Analysis khusus pengguna yang sudah login (penyewa Wins Court atau akun umum). */
 export function Analysis() {
   const [state, setState] = useState<'checking' | 'in' | 'out'>(auth.token ? 'checking' : 'out');
   useEffect(() => {
@@ -76,15 +77,15 @@ function LoginGate() {
         <Link to="/" className="icon-btn" aria-label="Kembali">
           <Back size={20} />
         </Link>
-        <Brand sub="Analisis reli" />
+        <Brand sub="AI Match Analysis" />
         <span className="beta-tag">BETA</span>
       </div>
       <div className="card stack center" style={{ marginTop: 24, alignItems: 'center' }}>
         <span className="icon-btn" style={{ background: 'var(--text)', color: 'var(--lime)', borderColor: 'transparent' }}>
           <Lock size={20} />
         </span>
-        <h2 style={{ margin: 0 }}>Masuk dulu untuk analisis reli</h2>
-        <p className="small mute">Analisis reli bisa dipakai penyewa Wins Court dan pemilik akun umum. Sesudah masuk, kamu langsung kembali ke sini.</p>
+        <h2 style={{ margin: 0 }}>Masuk dulu untuk AI Match Analysis</h2>
+        <p className="small mute">AI Match Analysis bisa dipakai penyewa Wins Court dan pemilik akun umum. Sesudah masuk, kamu langsung kembali ke sini.</p>
         <Link to="/" className="btn btn-primary btn-lg btn-block" onClick={() => loginThen(next)}>
           Masuk / daftar
         </Link>
@@ -102,7 +103,7 @@ function AnalysisApp() {
     teamSize: 2,
     teamA: ['', ''],
     teamB: ['', ''],
-    title: 'Analisis reli',
+    title: 'AI Match Analysis',
   });
   const [src, setSrc] = useState<string | null>(null);
   const [meta, setMeta] = useState<{ duration: number; aspect: number } | null>(null);
@@ -155,7 +156,7 @@ function AnalysisApp() {
         <Link to={setup.from ? `/s/${setup.from.slug}` : '/'} className="icon-btn" aria-label="Kembali">
           <Back size={20} />
         </Link>
-        <Brand sub="Analisis reli" />
+        <Brand sub="AI Match Analysis" />
         <span className="beta-tag" title="Fitur percobaan: hasil AI perlu diperiksa">
           BETA
         </span>
@@ -163,7 +164,7 @@ function AnalysisApp() {
 
       <div className="an-head">
         <div className="eyebrow">{setup.sport === 'badminton' ? 'Badminton' : 'Padel'} · {setup.teamSize === 1 ? 'Tunggal' : 'Ganda'}</div>
-        <h1 className="an-title">Analisis reli</h1>
+        <h1 className="an-title">AI Match Analysis</h1>
         <p className="small mute">Hitung pukulan, jarak lari, zona main & kalori dari video main — langsung di HP, video tidak diunggah.</p>
       </div>
 
@@ -231,7 +232,7 @@ function AnalysisApp() {
         />
       )}
       {step === 3 && result && src && <ReviewStep src={src} r={result} setR={setResult} onBack={() => setStep(1)} onNext={() => setStep(4)} />}
-      {step === 4 && result && src && <ResultStep src={src} r={result} setR={setResult} end={end} onBack={() => setStep(3)} from={setup.from} />}
+      {step === 4 && result && src && <ResultStep src={src} r={result} setR={setResult} patch={(x) => setResult((cur) => (cur ? { ...cur, ...x } : cur))} end={end} onBack={() => setStep(3)} from={setup.from} />}
     </div>
   );
 }
@@ -1034,7 +1035,20 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
 
 /* ---------------- 5. Hasil ---------------- */
 
-function ResultStep({ src, r, setR, end, onBack, from }: { src: string; r: Result; setR: (r: Result) => void; end: number; onBack: () => void; from?: Setup['from'] }) {
+function ResultStep({
+  src,
+  r,
+  setR,
+  patch,
+  end,
+  onBack,
+  from,
+}: {
+  src: string;
+  r: Result;
+  setR: (r: Result) => void;
+  patch: (x: Partial<Result>) => void;
+  end: number; onBack: () => void; from?: Setup['from'] }) {
   const toast = useToast();
   const st = useMemo(() => summarize(r.frames, r.tracks, r.hits, r.sport, r.teamSize, r.weights), [r]);
   const [layout, setLayout] = useState<'portrait' | 'landscape'>('portrait');
@@ -1094,14 +1108,14 @@ function ResultStep({ src, r, setR, end, onBack, from }: { src: string; r: Resul
   };
 
   const ext = out?.mime.includes('mp4') ? 'mp4' : 'webm';
-  const fileName = `analisis-reli-${layout === 'portrait' ? '9x16' : '16x9'}.${ext}`;
+  const fileName = `ai-match-analysis-${layout === 'portrait' ? '9x16' : '16x9'}.${ext}`;
   const share = async () => {
     if (!out) return;
     const file = new File([out.blob], fileName, { type: out.blob.type });
     const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
     if (nav.canShare?.({ files: [file] })) {
       try {
-        await nav.share({ files: [file], title: 'Analisis reli · match.wins-court.com' });
+        await nav.share({ files: [file], title: 'AI Match Analysis · Wins Court' });
       } catch {
         /* dibatalkan */
       }
@@ -1242,6 +1256,7 @@ function ResultStep({ src, r, setR, end, onBack, from }: { src: string; r: Resul
 
       <div className="card stack">
         <h3>Simpan video</h3>
+        <RankingPicker r={r} patch={patch} from={from} />
         <p className="small mute">Video dengan nama pemain, label pukulan & statistik bergaya Wins Court — siap untuk Instagram, TikTok, atau WhatsApp.</p>
         <Seg
           value={layout}
@@ -1305,6 +1320,106 @@ function ResultStep({ src, r, setR, end, onBack, from }: { src: string; r: Resul
       <p className="tiny whisper center">
         Beta: angka adalah perkiraan mesin dari video dan bisa meleset, terutama bila pemain tertutup atau kamera bergerak.
       </p>
+    </div>
+  );
+}
+
+/* ---------------- peringkat sesi untuk overlay video ---------------- */
+
+const norm = (s: string) => s.trim().toLowerCase().replace(/s+/g, ' ');
+
+function RankingPicker({ r, patch, from }: { r: Result; patch: (x: Partial<Result>) => void; from?: Setup['from'] }) {
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
+  const [on, setOn] = useState(false);
+  const [slug, setSlug] = useState<string>(from?.slug ?? '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const names = useMemo(() => new Set(r.names.map(norm)), [r.names]);
+
+  useEffect(() => {
+    api
+      .me()
+      .then((m) => {
+        const list = [...m.sessions].sort((a, b) => b.start.localeCompare(a.start));
+        setSessions(list);
+        setSlug((cur) => cur || list[0]?.slug || '');
+      })
+      .catch(() => setSessions([]));
+  }, []);
+
+  useEffect(() => {
+    if (!on || !slug) {
+      patch({ ranking: null });
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    api
+      .session(slug)
+      .then(({ session: s }) => {
+        if (!alive) return;
+        const rows = playerStandings(s).map((x, i) => ({
+          rank: i + 1,
+          name: x.name,
+          played: x.played,
+          won: x.won,
+          lost: x.lost,
+          total: x.total,
+          inMatch: names.has(norm(x.name)),
+        }));
+        const ranking: Ranking = { session: s.name, sortBy: s.settings.sortBy === 'wins' ? 'wins' : 'points', rows };
+        patch({ ranking });
+      })
+      .catch((e) => alive && setError((e as Error).message))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, slug, names]);
+
+  const rk = r.ranking;
+  const shown = 5;
+  return (
+    <div className="stack an-rank-pick">
+      <Switch on={on} onChange={setOn} label="Tampilkan peringkat di video" hint="5 besar dari sesi milikmu (opsional)" />
+      {on && (
+        <label className="field">
+          <span className="label">Ambil dari sesi</span>
+          <select className="select" value={slug} onChange={(e) => setSlug(e.target.value)} disabled={!sessions}>
+            {(sessions ?? []).map((s) => (
+              <option key={s.slug} value={s.slug}>
+                {s.name} · {new Date(s.start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {on && sessions && sessions.length === 0 && <div className="tiny mute">Belum ada sesi milikmu. Buat sesi dulu supaya peringkatnya bisa ditampilkan di video.</div>}
+      {loading && <div className="tiny mute">Memuat peringkat…</div>}
+      {error && <div className="banner banner-danger small">{error}</div>}
+      {on && rk && !loading && (
+        <>
+          {rk.rows.length === 0 ? (
+            <div className="tiny mute">Sesi ini belum punya pertandingan selesai.</div>
+          ) : (
+            <ol className="an-rank">
+              {rk.rows.slice(0, shown).map((x) => (
+                <li key={x.rank} className={x.inMatch ? 'me' : ''}>
+                  <span className={`an-rank-n${x.rank <= 3 ? ' top' : ''}`}>{x.rank}</span>
+                  <span className="grow">{x.name}</span>
+                  <span className="tiny mute num">
+                    {x.won}-{x.lost}
+                  </span>
+                  <b className="num">{rk.sortBy === 'wins' ? x.won : x.total}</b>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="tiny mute">Nama pemain match ini ditandai lime. Bila di luar 5 besar, tetap ditampilkan di baris terakhir video.</div>
+        </>
+      )}
     </div>
   );
 }

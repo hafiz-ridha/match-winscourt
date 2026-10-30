@@ -50,7 +50,7 @@ export function Home() {
     return (
       <Login
         onDone={() => {
-          // Datang dari halaman yang wajib login (mis. Analisis reli) → kembali ke sana.
+          // Datang dari halaman yang wajib login (mis. AI Match Analysis) → kembali ke sana.
           const next = takeNext();
           if (next) nav(next);
           else setLoggedIn(true);
@@ -324,7 +324,7 @@ function Login({ onDone }: { onDone: () => void }) {
           </span>
           <div className="grow">
             <h3>
-              Analisis reli <span className="beta-tag">BETA</span>
+              AI Match Analysis <span className="beta-tag">BETA</span>
             </h3>
             <p className="small mute">Upload video main, AI melacak pemain & kok/bola: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
           </div>
