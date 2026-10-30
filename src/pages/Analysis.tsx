@@ -24,9 +24,9 @@ import {
 } from '../analysis/core.ts';
 import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Ranking, type Result } from '../analysis/render.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
-import { Back, Ball, Download, Info, Lock, Share, Shuttle, Swap } from '../components/Icons.tsx';
+import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
-import { loginThen } from './Home.tsx';
+import { LoginCard } from './Home.tsx';
 
 const FPS = 15;
 const STEPS = ['Video', 'Lapangan', 'Proses', 'Periksa', 'Hasil'];
@@ -65,12 +65,11 @@ export function Analysis() {
       .catch(() => setState(auth.token ? 'in' : 'out'));
   }, []);
   if (state === 'checking') return <Loader text="Memeriksa akun…" />;
-  if (state === 'out') return <LoginGate />;
+  if (state === 'out') return <LoginGate onDone={() => setState('in')} />;
   return <AnalysisApp />;
 }
 
-function LoginGate() {
-  const next = location.pathname + location.search;
+function LoginGate({ onDone }: { onDone: () => void }) {
   return (
     <div className="app an stack-lg">
       <div className="topbar">
@@ -80,16 +79,11 @@ function LoginGate() {
         <Brand sub="AI Match Analysis" />
         <span className="beta-tag">BETA</span>
       </div>
-      <div className="card stack center" style={{ marginTop: 24, alignItems: 'center' }}>
-        <span className="icon-btn" style={{ background: 'var(--text)', color: 'var(--lime)', borderColor: 'transparent' }}>
-          <Lock size={20} />
-        </span>
-        <h2 style={{ margin: 0 }}>Masuk dulu untuk AI Match Analysis</h2>
-        <p className="small mute">AI Match Analysis bisa dipakai penyewa Wins Court dan pemilik akun umum. Sesudah masuk, kamu langsung kembali ke sini.</p>
-        <Link to="/" className="btn btn-primary btn-lg btn-block" onClick={() => loginThen(next)}>
-          Masuk / daftar
-        </Link>
-      </div>
+      <LoginCard
+        onDone={onDone}
+        title="Masuk untuk AI Match Analysis"
+        hint="Untuk penyewa Wins Court dan pemilik akun umum. Sesudah masuk, langsung lanjut ke analisis."
+      />
     </div>
   );
 }

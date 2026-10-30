@@ -8,30 +8,10 @@ import { CourtArt } from '../components/CourtArt.tsx';
 import { Arrow, Ball, Court, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, SportChip, useRun } from '../components/ui.tsx';
 
-const NEXT_KEY = 'mwc.next';
-/** Simpan halaman tujuan sebelum diarahkan ke login. */
-export function loginThen(path: string) {
-  try {
-    sessionStorage.setItem(NEXT_KEY, path);
-  } catch {
-    /* mode privat */
-  }
-}
-function takeNext(): string | null {
-  try {
-    const v = sessionStorage.getItem(NEXT_KEY);
-    sessionStorage.removeItem(NEXT_KEY);
-    return v && v.startsWith('/') && !v.startsWith('//') ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 export function Home() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(!!auth.token);
   const [loggedIn, setLoggedIn] = useState(!!auth.token);
-  const nav = useNavigate();
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -46,17 +26,7 @@ export function Home() {
       .finally(() => setLoading(false));
   }, [loggedIn]);
 
-  if (!loggedIn)
-    return (
-      <Login
-        onDone={() => {
-          // Datang dari halaman yang wajib login (mis. AI Match Analysis) → kembali ke sana.
-          const next = takeNext();
-          if (next) nav(next);
-          else setLoggedIn(true);
-        }}
-      />
-    );
+  if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
   if (loading || !me) return <Loader text="Memuat booking kamu…" />;
   return (
     <HostHome
@@ -173,30 +143,8 @@ function AccountAuth({ onDone }: { onDone: () => void }) {
 }
 
 function Login({ onDone }: { onDone: () => void }) {
-  const [mode, setMode] = useState<'renter' | 'account'>('renter');
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
   const [link, setLink] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [demo, setDemo] = useState<{ name: string; phone: string; note: string }[]>([]);
-  const { run, busy } = useRun();
   const nav = useNavigate();
-
-  useEffect(() => {
-    api.config().then((c) => setDemo(c.mockAccounts)).catch(() => {});
-  }, []);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    try {
-      const r = await api.login(name, phone);
-      auth.set(r.token);
-      onDone();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
 
   const openLink = (e: FormEvent) => {
     e.preventDefault();
@@ -218,8 +166,72 @@ function Login({ onDone }: { onDone: () => void }) {
         <p className="mute small">Susun pertandingan adil otomatis, catat skor dari HP, dan lihat peringkat live. Gratis, semua fitur.</p>
       </div>
 
+      <LoginCard onDone={onDone} />
+
+      <form className="card stack rise" style={{ animationDelay: '160ms' }} onSubmit={openLink}>
+        <div>
+          <h3>Pemain? Buka link sesi</h3>
+          <p className="small mute">Tempel link dari host, atau minta host membagikannya di grup.</p>
+        </div>
+        <div className="row">
+          <input className="input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="match.wins-court.com/s/…" />
+          <button className="btn btn-dark">Buka</button>
+        </div>
+      </form>
+
+      <div className="card stack rise" style={{ animationDelay: '220ms' }}>
+        <div className="row" style={{ alignItems: 'flex-start' }}>
+          <span className="icon-btn" style={{ background: 'var(--text)', color: 'var(--lime)', borderColor: 'transparent' }}>
+            <Whistle size={20} />
+          </span>
+          <div className="grow">
+            <h3>Papan skor lokal</h3>
+            <p className="small mute">Catat skor satu pertandingan langsung dari HP. Tanpa login, tanpa internet.</p>
+          </div>
+        </div>
+        <div className="row">
+          <Link to="/wasit-lokal?sport=badminton" className="btn btn-ghost grow">
+            <Shuttle size={20} /> Badminton
+          </Link>
+          <Link to="/wasit-lokal?sport=padel" className="btn btn-ghost grow">
+            <Ball size={18} /> Padel
+          </Link>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+/** Form login host (penyewa Wins Court / akun umum) — dipakai di beranda & halaman yang wajib login. */
+export function LoginCard({ onDone, title = 'Masuk sebagai host', hint }: { onDone: () => void; title?: string; hint?: string }) {
+  const [mode, setMode] = useState<'renter' | 'account'>('renter');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [demo, setDemo] = useState<{ name: string; phone: string; note: string }[]>([]);
+  const { run, busy } = useRun();
+
+  useEffect(() => {
+    api.config().then((c) => setDemo(c.mockAccounts)).catch(() => {});
+  }, []);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const r = await api.login(name, phone);
+      auth.set(r.token);
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
       <div className="card stack rise" style={{ animationDelay: '80ms' }}>
-        <h2>Masuk sebagai host</h2>
+        <h2>{title}</h2>
+        {hint && <p className="small mute">{hint}</p>}
         <Seg
           value={mode}
           onChange={setMode}
@@ -285,52 +297,6 @@ function Login({ onDone }: { onDone: () => void }) {
       </form>
         )}
       </div>
-
-      <form className="card stack rise" style={{ animationDelay: '160ms' }} onSubmit={openLink}>
-        <div>
-          <h3>Pemain? Buka link sesi</h3>
-          <p className="small mute">Tempel link dari host, atau minta host membagikannya di grup.</p>
-        </div>
-        <div className="row">
-          <input className="input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="match.wins-court.com/s/…" />
-          <button className="btn btn-dark">Buka</button>
-        </div>
-      </form>
-
-      <div className="card stack rise" style={{ animationDelay: '220ms' }}>
-        <div className="row" style={{ alignItems: 'flex-start' }}>
-          <span className="icon-btn" style={{ background: 'var(--text)', color: 'var(--lime)', borderColor: 'transparent' }}>
-            <Whistle size={20} />
-          </span>
-          <div className="grow">
-            <h3>Papan skor lokal</h3>
-            <p className="small mute">Catat skor satu pertandingan langsung dari HP. Tanpa login, tanpa internet.</p>
-          </div>
-        </div>
-        <div className="row">
-          <Link to="/wasit-lokal?sport=badminton" className="btn btn-ghost grow">
-            <Shuttle size={20} /> Badminton
-          </Link>
-          <Link to="/wasit-lokal?sport=padel" className="btn btn-ghost grow">
-            <Ball size={18} /> Padel
-          </Link>
-        </div>
-      </div>
-
-      <Link to="/analisis" className="card card-link stack rise an-home" style={{ animationDelay: '260ms' }}>
-        <div className="row" style={{ alignItems: 'flex-start' }}>
-          <span className="icon-btn" style={{ background: 'var(--lime)', color: 'var(--on-lime)', borderColor: 'transparent' }}>
-            <Court size={20} />
-          </span>
-          <div className="grow">
-            <h3>
-              AI Match Analysis <span className="beta-tag">BETA</span>
-            </h3>
-            <p className="small mute">Upload video main, AI melacak pemain & kok/bola: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
-          </div>
-        </div>
-      </Link>
-    </div>
   );
 }
 
@@ -429,6 +395,23 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </div>
         <HeroCourt initial={first?.sport ?? 'badminton'} />
       </div>
+
+      <Link to="/analisis" className="card card-dark card-link stack rise an-home">
+        <div className="row" style={{ alignItems: 'center' }}>
+          <span className="icon-btn" style={{ background: 'var(--lime)', color: 'var(--on-lime)', borderColor: 'transparent' }}>
+            <Court size={20} />
+          </span>
+          <div className="grow">
+            <h3 style={{ color: '#fff' }}>
+              AI Match Analysis <span className="beta-tag dark">BETA</span>
+            </h3>
+            <p className="small" style={{ opacity: 0.75 }}>
+              Upload video main: AI hitung pukulan, jarak lari & kalori, lalu jadikan video Reels.
+            </p>
+          </div>
+          <Arrow size={20} />
+        </div>
+      </Link>
 
       {me.account && (
         <section className="card stack rise">
