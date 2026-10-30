@@ -199,6 +199,22 @@ function Login({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
+      {/* Belum login: kartu tetap tampil; diklik → /analisis menampilkan form login dulu. */}
+      <Link to="/analisis" className="card card-link stack rise an-home" style={{ animationDelay: '260ms' }}>
+        <div className="row" style={{ alignItems: 'flex-start' }}>
+          <span className="icon-btn" style={{ background: 'var(--lime)', color: 'var(--on-lime)', borderColor: 'transparent' }}>
+            <Court size={20} />
+          </span>
+          <div className="grow">
+            <h3>
+              AI Match Analysis <span className="beta-tag">BETA</span>
+            </h3>
+            <p className="small mute">Upload video main, AI melacak pemain & kok/bola: hitung pukulan, jarak lari, zona & kalori, lalu jadikan video Reels.</p>
+          </div>
+          <Arrow size={20} />
+        </div>
+      </Link>
+
     </div>
   );
 }
