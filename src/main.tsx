@@ -10,6 +10,7 @@ import { Referee } from './pages/Referee.tsx';
 import { LocalReferee } from './pages/LocalReferee.tsx';
 import { TvBoard } from './pages/TvBoard.tsx';
 import { Join } from './pages/Join.tsx';
+import { Admin } from './pages/Admin.tsx';
 
 // Aplikasi berhasil dimuat: reset penanda muat-ulang dan rapikan ?_r= dari URL (lihat index.html).
 try {
@@ -48,6 +49,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/s/:slug/tv" element={<TvBoard />} />
           <Route path="/s/:slug/gabung" element={<Join />} />
           <Route path="/wasit-lokal" element={<LocalReferee />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

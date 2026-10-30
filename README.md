@@ -41,6 +41,22 @@ git pull && bash install.sh   # update ke versi terbaru
 
 Data tersimpan di folder `data/` (ikut backup aaPanel).
 
+### Dashboard admin
+
+Buka `https://match.wins-court.com/admin` untuk melihat semua pengguna (akun umum & penyewa Wins Court),
+daftar sesi, reset PIN akun umum, dan mengunduh data: pengguna / sesi / pertandingan / peringkat (CSV,
+bisa dibuka di Excel) serta backup database lengkap (`.db`).
+
+Kredensial admin diatur di `.env` server — tidak pernah disimpan di repo:
+
+```
+ADMIN_USER=root
+ADMIN_PASSWORD=isi-password-kuat
+```
+
+Setelah mengubah `.env`, jalankan `bash install.sh restart`. Jika `ADMIN_PASSWORD` kosong, dashboard nonaktif.
+Login dibatasi 5 percobaan per 15 menit per IP; sesi admin berlaku 12 jam.
+
 ## Integrasi Wins Court
 
 Login penyewa memakai 1 endpoint di wins-court.com. Spesifikasi, perintah untuk developer/Claude Code,

@@ -8,6 +8,7 @@ import { maskPhone, normalizeName, normalizePhone, uid } from '../shared/util.ts
 import { applyAction, cleanName, HttpError, newPlayer, type Role } from './actions.ts';
 import { accounts, hostById, hosts, playerTokens, sessions, type Host } from './db.ts';
 import { findBookings, isMock, MOCK_ACCOUNTS } from './winscourt.ts';
+import { adminRouter } from './admin.ts';
 
 const app = express();
 app.use(express.json({ limit: '200kb' }));
@@ -414,6 +415,7 @@ api.delete('/s/:slug', (req, res) => {
   res.json({ ok: true });
 });
 
+app.use('/api/admin', adminRouter);
 app.use('/api', api);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Tidak ditemukan' }));
 

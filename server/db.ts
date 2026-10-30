@@ -89,6 +89,54 @@ export const accounts = {
   },
 };
 
+/* ---------- dashboard admin ---------- */
+
+export interface AdminUser {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  type: 'akun_umum' | 'penyewa_wins';
+  created_at: number;
+  account_created_at: number | null;
+  sessions: number;
+  last_activity: number | null;
+}
+
+export interface AdminSessionRow {
+  id: string;
+  slug: string;
+  host_id: string;
+  booking_id: string;
+  data: string;
+  updated_at: number;
+}
+
+export const admin = {
+  users(): AdminUser[] {
+    return db
+      .prepare(
+        `SELECT h.id, h.name, h.phone, a.email, h.created_at, a.created_at AS account_created_at,
+                CASE WHEN a.host_id IS NULL THEN 'penyewa_wins' ELSE 'akun_umum' END AS type,
+                (SELECT COUNT(*) FROM sessions s WHERE s.host_id = h.id) AS sessions,
+                (SELECT MAX(updated_at) FROM sessions s WHERE s.host_id = h.id) AS last_activity
+         FROM hosts h LEFT JOIN accounts a ON a.host_id = h.id
+         ORDER BY h.created_at DESC`,
+      )
+      .all() as unknown as AdminUser[];
+  },
+  sessions(): AdminSessionRow[] {
+    return db.prepare('SELECT id, slug, host_id, booking_id, data, updated_at FROM sessions ORDER BY updated_at DESC').all() as unknown as AdminSessionRow[];
+  },
+  setPin(hostId: string, pinHash: string, salt: string): boolean {
+    return db.prepare('UPDATE accounts SET pin_hash = ?, pin_salt = ? WHERE host_id = ?').run(pinHash, salt, hostId).changes > 0;
+  },
+  /** Salinan database yang konsisten (aman saat aplikasi berjalan). */
+  backupTo(path: string) {
+    db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+  },
+};
+
 export const hostById = (id: string): Host | undefined =>
   db.prepare('SELECT id, name, phone, token FROM hosts WHERE id = ?').get(id) as Host | undefined;
 

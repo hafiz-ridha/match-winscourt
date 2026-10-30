@@ -73,6 +73,11 @@ ensure_env() {
   sed -i 's/\r$//' .env
   APP_PORT="$(env_get APP_PORT)"; APP_PORT="${APP_PORT:-8787}"
   [[ "$APP_PORT" =~ ^[0-9]+$ ]] || die "APP_PORT di .env harus angka (sekarang: '$APP_PORT')."
+  # .env lama (sebelum ada dashboard admin): tambahkan baris kosongnya.
+  if ! grep -qE '^ADMIN_PASSWORD=' .env; then
+    printf '\n# Dashboard admin (/admin)\nADMIN_USER=root\nADMIN_PASSWORD=\n' >> .env
+  fi
+  [ -n "$(env_get ADMIN_PASSWORD)" ] || warn "Dashboard admin nonaktif: isi ADMIN_PASSWORD di .env lalu jalankan 'bash install.sh restart'."
 }
 
 port_in_use_by_other() {
@@ -171,7 +176,7 @@ case "${1:-install}" in
   install|update) cmd_install ;;
   status)  ensure_docker; ensure_env; $DC ps; curl -fsS "http://127.0.0.1:${APP_PORT}/api/config" >/dev/null && log "Aplikasi sehat." || warn "Aplikasi tidak merespons." ;;
   logs)    ensure_docker; $DC logs -f --tail=200 ;;
-  restart) need_root; ensure_docker; ensure_env; $DC restart; wait_healthy; log "Restart selesai." ;;
+  restart) need_root; ensure_docker; ensure_env; $DC up -d --force-recreate; wait_healthy; log "Restart selesai (.env dibaca ulang)." ;;
   stop)    need_root; ensure_docker; $DC down; log "Container dihentikan. Data tetap di ./data" ;;
   backup)  cmd_backup ;;
   *) die "Perintah tidak dikenal: $1 (pakai: install | status | logs | restart | stop | backup)" ;;

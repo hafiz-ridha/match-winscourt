@@ -1594,3 +1594,29 @@ details.adv[open] summary .chev {
   min-height: 58px;
   font-size: 17px;
 }
+
+/* ---------- dashboard admin ---------- */
+.app.admin {
+  max-width: 1120px;
+}
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.admin-downloads {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+.admin-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.admin-table .table {
+  min-width: 760px;
+}
+.admin-table .table td,
+.admin-table .table th {
+  white-space: nowrap;
+}
