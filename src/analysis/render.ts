@@ -486,8 +486,8 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 22);
   } else {
+    // 16:9 — elemen di empat sudut, bagian tengah & atas tetap lega untuk video.
     const M = 28;
-    const G = 14;
     let vw = W;
     let vh = W / va;
     if (vh > H) {
@@ -498,78 +498,80 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     const vy = (H - vh) / 2;
     ctx.drawImage(video, vx, vy, vw, vh);
     drawOverlay(ctx, r, fi, vx, vy, vw, vh);
-    const gt = ctx.createLinearGradient(0, 0, 0, 150);
-    gt.addColorStop(0, 'rgba(14,23,20,0.85)');
-    gt.addColorStop(1, 'rgba(14,23,20,0)');
-    ctx.fillStyle = gt;
-    ctx.fillRect(0, 0, W, 150);
-    const gb = ctx.createLinearGradient(0, H - 90, 0, H);
+    const gb = ctx.createLinearGradient(0, H - 80, 0, H);
     gb.addColorStop(0, 'rgba(14,23,20,0)');
-    gb.addColorStop(1, 'rgba(14,23,20,0.85)');
+    gb.addColorStop(1, 'rgba(14,23,20,0.75)');
     ctx.fillStyle = gb;
-    ctx.fillRect(0, H - 90, W, 90);
+    ctx.fillRect(0, H - 80, W, 80);
 
-    // Header kiri + label kanan.
-    brand(ctx, M, 58, 30);
-    ctx.textAlign = 'left';
-    ctx.font = F(600, 15);
-    ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    ctx.fillText(clip(ctx, r.title, 420), M, 82);
-    pillRight(ctx, W - M, 46, 'AI MATCH ANALYSIS', 13);
-
-    // Kolom kiri: statistik + daftar pemain.
-    const LW = 360;
-    const rowH = 38;
-    const ky = 104;
-    const kh = 86 + st.players.length * rowH + 10;
-    panel(ctx, M, ky, LW, kh, 18);
-    stat(ctx, M + LW / 4, ky + 50, String(totalHits), 'PUKULAN', LIME, 38);
-    stat(ctx, M + (LW * 3) / 4, ky + 50, String(st.rallies), 'RELI', '#ffffff', 38);
+    // Atas kiri: satu kartu ringkas — merek + pukulan & reli.
+    const SW = 300;
+    const SH = 92;
+    panel(ctx, M, M, SW, SH, 18);
+    brand(ctx, M + 18, M + 34, 22);
+    ctx.textAlign = 'right';
+    ctx.font = F(800, 10);
+    ctx.fillStyle = LIME;
+    ctx.fillText('AI MATCH ANALYSIS', M + SW - 18, M + 30);
     ctx.strokeStyle = 'rgba(255,255,255,0.14)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(M + 16, ky + 84);
-    ctx.lineTo(M + LW - 16, ky + 84);
+    ctx.moveTo(M + 18, M + 46);
+    ctx.lineTo(M + SW - 18, M + 46);
     ctx.stroke();
+    const inline = (x: number, value: string, label: string, color: string) => {
+      ctx.textAlign = 'left';
+      ctx.font = F(800, 26);
+      ctx.fillStyle = color;
+      ctx.fillText(value, x, M + 80);
+      const w = ctx.measureText(value).width;
+      ctx.font = F(700, 12);
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText(label, x + w + 8, M + 79);
+    };
+    inline(M + 18, String(totalHits), 'PUKULAN', LIME);
+    inline(M + SW / 2 + 10, String(st.rallies), 'RELI', '#ffffff');
+
+    // Bawah kiri: daftar pemain.
+    const rowH = 32;
+    const PH = 16 + st.players.length * rowH;
+    const py = H - 52 - PH;
+    panel(ctx, M, py, SW, PH, 18);
     st.players.forEach((p, i) => {
-      const y = ky + 86 + i * rowH + rowH / 2;
+      const y = py + 8 + i * rowH + rowH / 2;
       ctx.fillStyle = PLAYER_COLORS[i % 4];
       ctx.beginPath();
-      ctx.arc(M + 22, y, 6, 0, Math.PI * 2);
+      ctx.arc(M + 20, y, 5.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
-      ctx.font = F(700, 16);
+      ctx.font = F(700, 14);
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(clip(ctx, r.names[i] ?? `Pemain ${i + 1}`, 120), M + 36, y);
+      ctx.fillText(clip(ctx, r.names[i] ?? `Pemain ${i + 1}`, 104), M + 32, y);
       ctx.textAlign = 'right';
-      ctx.font = F(700, 15);
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText(`${p.hits} pkl · ${fmt1(p.distance)} m${showKcal ? ` · ${fmt1(p.kcal)} kkal` : ''}`, M + LW - 16, y);
+      ctx.font = F(600, 13);
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.fillText(`${p.hits} pkl · ${fmt1(p.distance)} m${showKcal ? ` · ${fmt1(p.kcal)} kkal` : ''}`, M + SW - 16, y);
       ctx.textBaseline = 'alphabetic';
     });
 
-    // Kolom kanan: peringkat (opsional) + peta mini.
-    const RW = 300;
-    let ry = 104;
-    if (rk) {
-      drawRanking(ctx, rk, W - M - RW, ry, RW, 214);
-      ry += 214 + G;
-    }
-    const mh = Math.min(260, H - 70 - ry);
-    const mw = Math.round(mh * 0.62);
-    panel(ctx, W - M - mw, ry, mw, mh, 18);
-    drawMiniCourt(ctx, r, fi, W - M - mw + 6, ry + 6, mw - 12, mh - 12);
+    // Atas kanan: peringkat (opsional). Bawah kanan: peta mini.
+    if (rk) drawRanking(ctx, rk, W - M - 280, M, 280, 186);
+    const mh = 200;
+    const mw = 124;
+    panel(ctx, W - M - mw, H - 52 - mh, mw, mh, 18);
+    drawMiniCourt(ctx, r, fi, W - M - mw + 5, H - 52 - mh + 5, mw - 10, mh - 10);
 
     // Footer.
     ctx.textAlign = 'center';
-    ctx.font = F(800, 22);
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = F(800, 20);
     ctx.fillStyle = LIME;
-    ctx.fillText('wins-court.com', W / 2, H - 24);
+    ctx.fillText('wins-court.com', W / 2, H - 20);
     ctx.textAlign = 'left';
-    ctx.font = F(600, 12);
+    ctx.font = F(600, 11);
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText('Beta · perkiraan AI', M, H - 24);
+    ctx.fillText('Beta · perkiraan AI', M, H - 20);
   }
 }
 
