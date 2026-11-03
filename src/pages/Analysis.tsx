@@ -892,7 +892,7 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
     if (c.height !== Math.round(rect.height * dpr)) c.height = Math.round(rect.height * dpr);
     const ctx = c.getContext('2d')!;
     ctx.clearRect(0, 0, c.width, c.height);
-    drawOverlay(ctx, r, frameAt(r, v.currentTime), 0, 0, c.width, c.height, { court: true, selectedHit: sel });
+    drawOverlay(ctx, r, frameAt(r, v.currentTime), 0, 0, c.width, c.height, { court: true, selectedHit: sel, time: v.currentTime });
   }, [r, sel]);
 
   useEffect(() => {

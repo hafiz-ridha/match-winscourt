@@ -8,6 +8,29 @@
 import { drawExportFrame, frameAt, type Result } from './render.ts';
 import { seek } from './vision.ts';
 
+type RVFCVideo = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
+
+/**
+ * Seek lalu tunggu frame BARU benar-benar siap digambar (requestVideoFrameCallback), supaya tidak ada
+ * frame lama yang terulang (penyebab video tersendat). Batas tunggu 250 ms sebagai cadangan.
+ */
+function seekExact(video: HTMLVideoElement, t: number): Promise<void> {
+  const v = video as RVFCVideo;
+  if (!v.requestVideoFrameCallback) return seek(video, t);
+  if (Math.abs(video.currentTime - t) < 0.0005) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    v.requestVideoFrameCallback!(() => finish());
+    setTimeout(finish, 250);
+    video.currentTime = t;
+  });
+}
+
 const FPS = 30;
 const VIDEO_CODECS = ['avc1.640028', 'avc1.4d0028', 'avc1.42e01f'];
 
@@ -101,7 +124,7 @@ export async function exportMp4(opts: {
 
   // Video sumber dipasang di halaman (tak terlihat) supaya browser HP mau mendekode frame.
   const holder = document.createElement('div');
-  holder.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:2147483647';
   document.body.appendChild(holder);
   const video = document.createElement('video');
   holder.appendChild(video);
@@ -122,17 +145,94 @@ export async function exportMp4(opts: {
     });
 
     const usPerFrame = 1e6 / FPS;
-    for (let i = 0; i < total; i++) {
-      if (opts.signal.cancelled) throw new Error('Dibatalkan');
-      if (failure) throw failure;
+    const emit = (i: number) => {
       const t = t0 + i / FPS;
-      await seek(video, Math.min(t, opts.end - 0.01));
       drawExportFrame(ctx, video, r, frameAt(r, t), layout, opts.showKcal, t);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(i * usPerFrame), duration: Math.round(usPerFrame) });
       venc.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
       frame.close();
-      while (venc.encodeQueueSize > 6) await new Promise((res) => setTimeout(res, 4));
-      if (i % 3 === 0) opts.onProgress((i + 1) / total);
+    };
+    const v = video as RVFCVideo & { requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number; presentedFrames: number }) => void) => number };
+
+    let noFrames = false;
+    if (v.requestVideoFrameCallback) {
+      // Video diputar; tiap frame yang benar-benar tampil ditangkap lalu dipetakan ke frame keluaran 30 fps
+      // berdasarkan waktu medianya → tanpa frame dobel/terlewat akibat seek, dan frame pertama bukan hitam.
+      await seekExact(video, t0);
+      // ½× sejak awal: dekoder sempat menyiapkan tiap frame (awal video tidak ada frame terlewat/dobel).
+      let rate = 0.5;
+      video.playbackRate = rate;
+      let next = 0;
+      let lastPresented = -1;
+      await new Promise<void>((resolve, reject) => {
+        let finished = false;
+        const finish = (err?: Error) => {
+          if (finished) return;
+          finished = true;
+          clearInterval(watchdog);
+          video.pause();
+          if (err) reject(err);
+          else resolve();
+        };
+        let lastProgress = performance.now();
+        const started = performance.now();
+        const watchdog = setInterval(() => {
+          if (opts.signal.cancelled) finish(new Error('Dibatalkan'));
+          // Browser tidak mengirim frame (mis. halaman tidak dirender) → pakai cara seek per frame.
+          else if (lastPresented < 0 && performance.now() - started > 2000) {
+            noFrames = true;
+            finish();
+          }
+          else if (failure) finish(failure);
+          else if (video.paused && !video.ended && next < total) video.play().catch(() => {});
+          else if (performance.now() - lastProgress > 6000) finish(new Error('Pemutaran video macet. Biarkan layar tetap menyala lalu coba lagi.'));
+        }, 500);
+        const onFrame = (_now: number, meta: { mediaTime: number; presentedFrames: number }) => {
+          if (finished) return;
+          lastProgress = performance.now();
+          // Frame sumber terlewat (perangkat kewalahan) → perlambat pemutaran.
+          if (lastPresented >= 0 && meta.presentedFrames - lastPresented > 1 && rate > 0.25) {
+            rate = rate / 2;
+            video.playbackRate = rate;
+          }
+          lastPresented = meta.presentedFrames;
+          const m = meta.mediaTime - t0;
+          // Tulis semua frame keluaran yang waktunya sudah dicapai frame sumber ini.
+          while (next < total && next / FPS <= m + 0.5 / FPS) emit(next++);
+          if (next % 6 === 0) opts.onProgress(next / total);
+          if (next >= total || meta.mediaTime >= opts.end - 0.001) {
+            while (next < total) emit(next++); // sisa (ujung video) memakai frame terakhir
+            return finish();
+          }
+          // Antrean encoder penuh: jeda sebentar supaya tidak ada frame yang terlewat.
+          if (venc.encodeQueueSize > 8) {
+            video.pause();
+            const wait = () => (venc.encodeQueueSize > 2 ? setTimeout(wait, 8) : video.play().catch(() => {}));
+            wait();
+          }
+          v.requestVideoFrameCallback!(onFrame);
+        };
+        v.requestVideoFrameCallback!(onFrame);
+        video.addEventListener('ended', () => {
+          if (finished) return;
+          while (next < total) emit(next++);
+          finish();
+        }, { once: true });
+        video.play().catch(() => finish(new Error('Video tidak bisa diputar untuk dibuat ulang')));
+      });
+    }
+    if (!v.requestVideoFrameCallback || noFrames) {
+      // Cadangan: seek per frame (browser tanpa requestVideoFrameCallback, atau frame tidak terkirim).
+      const go = noFrames ? seek : seekExact;
+      await go(video, Math.min(t0 + 0.05, opts.end - 0.01)); // "pemanasan": hindari frame pertama hitam (Safari)
+      for (let i = 0; i < total; i++) {
+        if (opts.signal.cancelled) throw new Error('Dibatalkan');
+        if (failure) throw failure;
+        await go(video, Math.min(t0 + i / FPS, opts.end - 0.01));
+        emit(i);
+        while (venc.encodeQueueSize > 6) await new Promise((res) => setTimeout(res, 4));
+        if (i % 3 === 0) opts.onProgress((i + 1) / total);
+      }
     }
     await venc.flush();
     if (failure) throw failure;

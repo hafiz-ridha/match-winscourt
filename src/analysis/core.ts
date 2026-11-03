@@ -373,7 +373,19 @@ function fillGaps(t: Track, maxGap: number) {
 }
 
 /** Posisi lapangan yang dihaluskan (rata-rata bergerak) — dasar jarak tempuh & zona. */
+const smoothCourtCache = new WeakMap<Track, (Pt | null)[]>();
 export function smoothCourt(t: Track, win = 2): (Pt | null)[] {
+  // Dipakai tiap frame saat menyusun video (statistik & peta mini) → hasil disimpan sekali per jalur.
+  if (win === 2) {
+    const hit = smoothCourtCache.get(t);
+    if (hit) return hit;
+    const v = smoothCourtRaw(t, win);
+    smoothCourtCache.set(t, v);
+    return v;
+  }
+  return smoothCourtRaw(t, win);
+}
+function smoothCourtRaw(t: Track, win: number): (Pt | null)[] {
   return t.frames.map((f, i) => {
     if (!f) return null;
     let sx = 0;

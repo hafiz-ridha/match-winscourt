@@ -229,6 +229,65 @@ export interface OverlayOpts {
   court?: boolean;
   boxes?: boolean;
   selectedHit?: string | null;
+  /** Waktu tepat (detik) yang digambar; posisi diinterpolasi di antara frame analisis. */
+  time?: number;
+}
+
+/** Posisi tampilan pemain per frame analisis, sudah dihaluskan (tanpa getar deteksi pose). */
+interface SmoothFrame {
+  fx: number;
+  fy: number;
+  hx: number;
+  hy: number;
+  bw: number;
+  bx: number;
+  by: number;
+  bh: number;
+}
+const smoothCache = new WeakMap<Track, (SmoothFrame | null)[]>();
+const WEIGHTS = [1, 2, 3, 4, 3, 2, 1]; // jendela ±3 frame, berbobot ke tengah
+
+function smoothTrack(t: Track): (SmoothFrame | null)[] {
+  const hit = smoothCache.get(t);
+  if (hit) return hit;
+  const out = t.frames.map((f, i) => {
+    if (!f) return null;
+    const acc = { fx: 0, fy: 0, hx: 0, hy: 0, bw: 0, bx: 0, by: 0, bh: 0 };
+    let wsum = 0;
+    for (let k = -3; k <= 3; k++) {
+      const g = t.frames[i + k];
+      if (!g) continue;
+      const wt = WEIGHTS[k + 3];
+      wsum += wt;
+      acc.fx += g.foot.x * wt;
+      acc.fy += g.foot.y * wt;
+      acc.hx += (g.box.x + g.box.w / 2) * wt;
+      acc.hy += g.box.y * wt;
+      acc.bw += g.box.w * wt;
+      acc.bx += g.box.x * wt;
+      acc.by += g.box.y * wt;
+      acc.bh += g.box.h * wt;
+    }
+    for (const key of Object.keys(acc) as (keyof SmoothFrame)[]) acc[key] /= wsum;
+    return acc;
+  });
+  smoothCache.set(t, out);
+  return out;
+}
+
+/** Interpolasi posisi halus di frame pecahan `ff` (mis. 12.5 = di antara frame 12 dan 13). */
+function smoothAt(t: Track, ff: number): SmoothFrame | null {
+  const s = smoothTrack(t);
+  const i = Math.floor(ff);
+  const a = s[i];
+  const b = s[i + 1];
+  const r = ff - i;
+  if (a && b) {
+    const out = {} as SmoothFrame;
+    for (const key of Object.keys(a) as (keyof SmoothFrame)[]) out[key] = a[key] + (b[key] - a[key]) * r;
+    return out;
+  }
+  return a ?? (r > 0.5 ? b : null) ?? null;
 }
 
 /** Overlay di atas video. (ox, oy, w, h) = area video di kanvas. */
@@ -253,52 +312,86 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
     }
   }
 
-  const now = exportTime ?? r.frames[fi]?.t ?? 0;
-  // Jejak kok/bola (8 frame terakhir) — bisa dimatikan di pengaturan video.
-  if (r.style?.shuttle !== false) for (let k = 8; k >= 0; k--) {
-    const s = r.shuttle[fi - k];
-    if (!s) continue;
-    const p = P(s);
-    ctx.fillStyle = k === 0 ? '#ffffff' : `rgba(198,255,61,${0.75 - k * 0.08})`;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, k === 0 ? u * 0.42 : u * 0.28, 0, Math.PI * 2);
-    ctx.fill();
-    if (k === 0) {
+  const now = o.time ?? exportTime ?? r.frames[fi]?.t ?? 0;
+  const t0 = r.frames[0]?.t ?? 0;
+  const dt = frameDt(r.frames);
+  const ff = Math.max(0, Math.min(r.frames.length - 1, (now - t0) / dt));
+  const f0 = Math.floor(ff);
+  const frac = ff - f0;
+
+  // Jejak kok/bola: garis meruncing dari posisi lama ke ujung yang bergerak halus.
+  if (r.style?.shuttle !== false) {
+    const pts: Pt[] = [];
+    for (let k = 7; k >= 0; k--) {
+      const s = r.shuttle[f0 - k];
+      if (s) pts.push(s);
+      else if (pts.length) pts.length = 0; // hanya bagian lintasan yang tersambung
+    }
+    const nextS = r.shuttle[f0 + 1];
+    const cur = r.shuttle[f0];
+    if (cur && nextS) pts.push({ x: cur.x + (nextS.x - cur.x) * frac, y: cur.y + (nextS.y - cur.y) * frac });
+    if (pts.length >= 2) {
+      for (let k = 1; k < pts.length; k++) {
+        const q = k / (pts.length - 1);
+        const A = P(pts[k - 1]);
+        const B = P(pts[k]);
+        ctx.strokeStyle = `rgba(198,255,61,${0.12 + 0.6 * q})`;
+        ctx.lineWidth = u * (0.12 + 0.38 * q);
+        ctx.beginPath();
+        ctx.moveTo(A.x, A.y);
+        ctx.lineTo(B.x, B.y);
+        ctx.stroke();
+      }
+    }
+    if (pts.length) {
+      const head = P(pts[pts.length - 1]);
+      ctx.fillStyle = '#ffffff';
       ctx.strokeStyle = LIME;
       ctx.lineWidth = u / 5;
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, u * 0.4, 0, Math.PI * 2);
+      ctx.fill();
       ctx.stroke();
     }
   }
 
-  // Pemain: penanda modern di kaki + label nama di atas kepala.
+  // Pemain: penanda modern di kaki + label nama di atas kepala (posisi halus & terinterpolasi).
+  const heads: (Pt | null)[] = [];
   r.tracks.forEach((t, i) => {
-    const f = t.frames[fi];
-    if (!f) return;
+    const s = smoothAt(t, ff);
+    heads[i] = null;
+    if (!s) return;
     const c = PLAYER_COLORS[i % 4];
-    const foot = P(f.foot);
+    const foot = P({ x: s.fx, y: s.fy });
     const lastHit = r.hits.filter((x) => x.player === i && x.t <= now + 0.001).slice(-1)[0];
     const flash = lastHit ? Math.max(0, 1 - (now - lastHit.t) / 0.5) : 0;
-    const rx = Math.max(u * 1.1, f.box.w * w * 0.62);
+    const rx = Math.max(u * 1.1, s.bw * w * 0.62);
     playerMarker(ctx, foot.x, foot.y, rx, Math.max(u * 0.4, rx * 0.34), c, now + i * 0.4, flash, u);
     if (o.boxes) {
       ctx.strokeStyle = c + '99';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(ox + f.box.x * w, oy + f.box.y * h, f.box.w * w, f.box.h * h);
+      ctx.strokeRect(ox + s.bx * w, oy + s.by * h, s.bw * w, s.bh * h);
     }
-    const head = P({ x: f.box.x + f.box.w / 2, y: f.box.y });
+    const head = P({ x: s.hx, y: s.hy });
+    heads[i] = head;
     nameTag(ctx, head.x, head.y - u * 0.7, r.names[i] ?? `Pemain ${i + 1}`, c, u * 0.9);
   });
 
-  // Label pukulan di atas pemain selama 0.9 detik (bila tidak dipindah ke panel).
+  // Label pukulan di atas pemain selama 0.9 detik (bila tidak dipindah ke panel), ikut gerak pemain.
   const recent = r.style?.shotPos === 'panel' ? undefined : r.hits.filter((x) => now - x.t >= 0 && now - x.t < 0.9).slice(-1)[0];
   const sel = o.selectedHit ? r.hits.find((x) => x.id === o.selectedHit) : null;
   for (const hit of [recent, sel].filter(Boolean) as Hit[]) {
-    const f = r.tracks[hit.player]?.frames[hit.frame];
-    if (!f) continue;
-    const p = P({ x: f.box.x + f.box.w / 2, y: f.box.y });
-    const a = hit === sel ? 1 : Math.max(0, 1 - (now - hit.t) / 0.9);
+    let p = heads[hit.player];
+    if (!p) {
+      const f = r.tracks[hit.player]?.frames[hit.frame];
+      if (!f) continue;
+      p = P({ x: f.box.x + f.box.w / 2, y: f.box.y });
+    }
+    const age = now - hit.t;
+    const a = hit === sel ? 1 : age < 0.7 ? 1 : Math.max(0, 1 - (age - 0.7) / 0.2);
+    const rise = hit === sel ? 0 : Math.min(1, age / 0.18); // muncul naik sedikit, halus
     ctx.globalAlpha = a;
-    pill(ctx, p.x, p.y - u * 3.4, shotLabel(r.sport, hit.type).toUpperCase(), LIME, INK, u * 1.15);
+    pill(ctx, p.x, p.y - u * (2.9 + 0.5 * rise), shotLabel(r.sport, hit.type).toUpperCase(), LIME, INK, u * 1.15);
     ctx.globalAlpha = 1;
   }
   ctx.restore();
@@ -938,7 +1031,7 @@ export async function exportVideo(opts: {
   if (!mime) throw new Error('Browser ini belum bisa merekam video. Coba Chrome atau Safari terbaru.');
   // Dipasang di halaman (hampir tak terlihat): browser HP menjeda video yang tidak ada di halaman.
   const holder = document.createElement('div');
-  holder.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:2147483647';
   document.body.appendChild(holder);
   const video = document.createElement('video');
   holder.appendChild(video);
@@ -996,13 +1089,21 @@ export async function exportVideo(opts: {
   }
 
   // Tanpa timeslice: satu file utuh saat berhenti (Safari: durasi & isi file benar).
-  rec.start();
   try {
     await video.play();
   } catch {
     video.muted = true;
     await video.play();
   }
+  // Mulai merekam setelah frame video pertama benar-benar tampil & tergambar (awal video tidak hitam).
+  await new Promise<void>((res) => {
+    const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => res());
+    else requestAnimationFrame(() => requestAnimationFrame(() => res()));
+    setTimeout(res, 500);
+  });
+  drawExportFrame(ctx, video, r, frameAt(r, video.currentTime), layout, opts.showKcal, video.currentTime);
+  rec.start();
 
   let failure: string | null = null;
   let reached = t0;
