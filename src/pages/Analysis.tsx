@@ -25,6 +25,7 @@ import {
   type Sport,
 } from '../analysis/core.ts';
 import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Ranking, type Result } from '../analysis/render.ts';
+import { exportMp4, mp4Codec, type Mp4Info } from '../analysis/mp4.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
 import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
@@ -1242,7 +1243,7 @@ function ResultStep({
   const [showKcal, setShowKcal] = useState(true);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
-  const [out, setOut] = useState<{ url: string; blob: Blob; mime: string } | null>(null);
+  const [out, setOut] = useState<{ url: string; blob: Blob; mime: string; info?: Mp4Info } | null>(null);
   const signal = useRef({ cancelled: false });
   const heat = useRef<HTMLCanvasElement>(null);
   const supported = !!recorderMime();
@@ -1286,7 +1287,12 @@ function ResultStep({
     if (out) URL.revokeObjectURL(out.url);
     setOut(null);
     try {
-      const res = await exportVideo({ src, r, layout, showKcal, end, onProgress: setProg, signal: signal.current, audio });
+      // Utama: MP4 standar (H.264 + AAC, 30 fps konstan, faststart) yang diterima Instagram.
+      // Cadangan untuk browser tanpa WebCodecs: rekaman MediaRecorder.
+      const codec = await mp4Codec(layout === 'portrait' ? 720 : 1280, layout === 'portrait' ? 1280 : 720);
+      const res = codec
+        ? await exportMp4({ src, r, layout, showKcal, end, codec, onProgress: setProg, signal: signal.current })
+        : await exportVideo({ src, r, layout, showKcal, end, onProgress: setProg, signal: signal.current, audio });
       setOut({ url: URL.createObjectURL(res.blob), ...res });
     } catch (e) {
       if ((e as Error).message !== 'Dibatalkan') toast((e as Error).message, true);
@@ -1463,7 +1469,7 @@ function ResultStep({
               <span style={{ width: `${Math.round(prog * 100)}%` }} />
             </div>
             <div className="row-between small">
-              <span className="mute">Merekam video… jangan tutup halaman</span>
+              <span className="mute">Menyusun video… jangan tutup halaman</span>
               <button className="btn btn-ghost btn-xs" onClick={() => (signal.current.cancelled = true)}>
                 Batal
               </button>
@@ -1479,7 +1485,27 @@ function ResultStep({
             <video src={out.url} controls playsInline className={`an-out ${layout}`} />
             <div className="tiny mute center">
               {(out.blob.size / 1_048_576).toFixed(1).replace('.', ',')} MB · {ext.toUpperCase()}
+              {out.info && (
+                <>
+                  {' '}
+                  · H.264 · {out.info.audio ? 'AAC' : 'tanpa suara'} · {out.info.fps} fps · {out.info.width}×{out.info.height}
+                </>
+              )}
             </div>
+            {out.info ? (
+              <div className="banner banner-lime small">
+                <span>
+                  ✓ Format MP4 standar, siap diunggah ke Instagram Story/Reels, TikTok, dan WhatsApp.
+                  {out.info.duration > 60 && ' Story Instagram maksimal 60 detik per bagian; Instagram akan membaginya otomatis.'}
+                </span>
+              </div>
+            ) : (
+              <div className="banner banner-warn small">
+                <span>
+                  Browser ini belum mendukung pembuatan MP4 standar, jadi video dibuat dengan perekaman biasa{ext === 'webm' ? ' (WebM, tidak diterima Instagram)' : ''}. Untuk hasil yang pasti diterima Instagram, pakai Chrome atau Safari versi terbaru.
+                </span>
+              </div>
+            )}
             <div className="row">
               <button className="btn btn-ghost grow" onClick={download}>
                 <Download size={18} /> Unduh
