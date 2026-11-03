@@ -12,6 +12,17 @@ export interface Ranking {
   rows: { rank: number; name: string; played: number; won: number; lost: number; total: number; inMatch: boolean }[];
 }
 
+/** Pengaturan tampilan video hasil. */
+export interface ExportStyle {
+  /** Animasi jejak kok/bola. */
+  shuttle: boolean;
+  /** Label jenis pukulan: di panel atas (di bawah Pukulan | Reli) atau di dalam video di atas pemain. */
+  shotPos: 'panel' | 'video';
+}
+
+/** Waktu (detik) frame ekspor yang sedang digambar — untuk animasi halus 30 fps. */
+let exportTime: number | null = null;
+
 export interface Result {
   sport: Sport;
   teamSize: 1 | 2;
@@ -28,6 +39,8 @@ export interface Result {
   obs?: FrameObs[];
   /** Titik kunci posisi pemain (manual). */
   anchors?: Anchor[];
+  /** Gaya video ekspor. */
+  style?: ExportStyle;
   /** Peringkat 5 besar (opsional, null = tidak ditampilkan). */
   ranking?: Ranking | null;
 }
@@ -55,6 +68,161 @@ function pill(ctx: CanvasRenderingContext2D, x: number, y: number, text: string,
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y + 0.5);
+}
+
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+
+/**
+ * Penanda pemain modern di lantai: sorotan bercahaya, cincin inti, dua busur yang berputar pelan,
+ * denyut keluar berkala, dan kilatan lime saat pemain memukul.
+ */
+function playerMarker(ctx: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number, color: string, t: number, flash: number, u: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1, ry / rx);
+  // Sorotan (glow) di lantai.
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx * 1.15);
+  g.addColorStop(0, rgba(color, 0.5));
+  g.addColorStop(0.55, rgba(color, 0.2));
+  g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx * 1.15, 0, Math.PI * 2);
+  ctx.fill();
+  // Denyut keluar.
+  const ph = (t % 1.6) / 1.6;
+  ctx.strokeStyle = rgba(color, 0.55 * (1 - ph));
+  ctx.lineWidth = u / 6;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx * (0.75 + 0.55 * ph), 0, Math.PI * 2);
+  ctx.stroke();
+  // Cincin inti + garis tepi putih tipis.
+  ctx.strokeStyle = color;
+  ctx.lineWidth = u / 3.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx * 0.72, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = u / 12;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx * 0.72 - u / 6, 0, Math.PI * 2);
+  ctx.stroke();
+  // Dua busur berputar.
+  const rot = t * 1.4;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = u / 5;
+  ctx.lineCap = 'round';
+  for (const off of [0, Math.PI]) {
+    ctx.beginPath();
+    ctx.arc(0, 0, rx, rot + off, rot + off + Math.PI * 0.55);
+    ctx.stroke();
+  }
+  // Kilatan saat memukul.
+  if (flash > 0) {
+    ctx.strokeStyle = rgba('#C6FF3D', flash);
+    ctx.lineWidth = u / 2.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, rx * (1.05 + 0.45 * (1 - flash)), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Label nama: pil gelap dengan titik warna pemain dan penunjuk kecil ke kepala. */
+function nameTag(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string, size: number) {
+  ctx.save();
+  ctx.font = `700 ${size}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  const dot = size * 0.42;
+  const w = ctx.measureText(text).width + size * 1.3 + dot * 2;
+  const h = size * 1.7;
+  const left = x - w / 2;
+  const top = y - h;
+  ctx.fillStyle = 'rgba(14,23,20,0.82)';
+  ctx.beginPath();
+  ctx.moveTo(left + h / 2, top);
+  ctx.arcTo(left + w, top, left + w, top + h, h / 2);
+  ctx.arcTo(left + w, top + h, left, top + h, h / 2);
+  ctx.arcTo(left, top + h, left, top, h / 2);
+  ctx.arcTo(left, top, left + w, top, h / 2);
+  ctx.closePath();
+  ctx.fill();
+  // penunjuk
+  ctx.beginPath();
+  ctx.moveTo(x - size * 0.35, top + h - 0.5);
+  ctx.lineTo(x + size * 0.35, top + h - 0.5);
+  ctx.lineTo(x, top + h + size * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = rgba(color, 0.9);
+  ctx.lineWidth = Math.max(1, size / 10);
+  ctx.beginPath();
+  ctx.moveTo(left + h / 2, top);
+  ctx.arcTo(left + w, top, left + w, top + h, h / 2);
+  ctx.arcTo(left + w, top + h, left, top + h, h / 2);
+  ctx.arcTo(left, top + h, left, top, h / 2);
+  ctx.arcTo(left, top, left + w, top, h / 2);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(left + size * 0.65 + dot / 2, top + h / 2, dot / 2 + 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, left + size * 0.65 + dot + size * 0.35, top + h / 2 + 0.5);
+  ctx.restore();
+}
+
+/** Label pukulan terakhir di panel (di luar video): "SMASH · Nama", menyala saat pukulan baru. */
+export function drawShotBanner(ctx: CanvasRenderingContext2D, r: Result, now: number, cx: number, cy: number, size: number) {
+  const last = r.hits.filter((h) => h.t <= now + 0.001).slice(-1)[0];
+  if (!last) return;
+  const age = now - last.t;
+  const glow = Math.max(0, 1 - age / 0.8);
+  const label = shotLabel(r.sport, last.type).toUpperCase();
+  const name = r.names[last.player] ?? `Pemain ${last.player + 1}`;
+  const color = PLAYER_COLORS[last.player % 4];
+  ctx.save();
+  ctx.font = `800 ${size}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  const lw = ctx.measureText(label).width;
+  ctx.font = `700 ${size * 0.62}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  const nw = ctx.measureText(name).width;
+  const pad = size * 0.7;
+  const gap = size * 0.6;
+  const w = pad * 2 + lw + gap + size * 0.5 + nw;
+  const h = size * 1.75;
+  const x = cx - w / 2;
+  const y = cy - h / 2;
+  ctx.fillStyle = glow > 0 ? `rgba(198,255,61,${0.92 * glow + 0.0})` : 'rgba(14,23,20,0.78)';
+  if (glow <= 0) ctx.fillStyle = 'rgba(14,23,20,0.78)';
+  roundRect(ctx, x, y, w, h, h / 2);
+  ctx.fill();
+  ctx.strokeStyle = glow > 0 ? 'rgba(14,23,20,0.25)' : 'rgba(255,255,255,0.14)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  const on = glow > 0.15;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.font = `800 ${size}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  ctx.fillStyle = on ? INK : LIME;
+  ctx.fillText(label, x + pad, cy + 1);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + pad + lw + gap + size * 0.2, cy, size * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  if (on) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.font = `700 ${size * 0.62}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
+  ctx.fillStyle = on ? INK : '#ffffff';
+  ctx.fillText(name, x + pad + lw + gap + size * 0.5, cy + 1);
+  ctx.restore();
 }
 
 export interface OverlayOpts {
@@ -85,8 +253,9 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
     }
   }
 
-  // Jejak kok/bola (8 frame terakhir).
-  for (let k = 8; k >= 0; k--) {
+  const now = exportTime ?? r.frames[fi]?.t ?? 0;
+  // Jejak kok/bola (8 frame terakhir) — bisa dimatikan di pengaturan video.
+  if (r.style?.shuttle !== false) for (let k = 8; k >= 0; k--) {
     const s = r.shuttle[fi - k];
     if (!s) continue;
     const p = P(s);
@@ -101,29 +270,27 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
     }
   }
 
-  // Pemain: elips di kaki + label nama di atas kepala.
+  // Pemain: penanda modern di kaki + label nama di atas kepala.
   r.tracks.forEach((t, i) => {
     const f = t.frames[fi];
     if (!f) return;
     const c = PLAYER_COLORS[i % 4];
     const foot = P(f.foot);
-    ctx.strokeStyle = c;
-    ctx.lineWidth = u / 4;
-    ctx.beginPath();
-    ctx.ellipse(foot.x, foot.y, Math.max(u, f.box.w * w * 0.55), Math.max(u * 0.35, f.box.w * w * 0.18), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    const lastHit = r.hits.filter((x) => x.player === i && x.t <= now + 0.001).slice(-1)[0];
+    const flash = lastHit ? Math.max(0, 1 - (now - lastHit.t) / 0.5) : 0;
+    const rx = Math.max(u * 1.1, f.box.w * w * 0.62);
+    playerMarker(ctx, foot.x, foot.y, rx, Math.max(u * 0.4, rx * 0.34), c, now + i * 0.4, flash, u);
     if (o.boxes) {
       ctx.strokeStyle = c + '99';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(ox + f.box.x * w, oy + f.box.y * h, f.box.w * w, f.box.h * h);
     }
     const head = P({ x: f.box.x + f.box.w / 2, y: f.box.y });
-    pill(ctx, head.x, head.y - u * 1.1, r.names[i] ?? `Pemain ${i + 1}`, c, INK, u * 0.95);
+    nameTag(ctx, head.x, head.y - u * 0.7, r.names[i] ?? `Pemain ${i + 1}`, c, u * 0.9);
   });
 
-  // Label pukulan selama 0.9 detik setelah pukulan.
-  const now = r.frames[fi]?.t ?? 0;
-  const recent = r.hits.filter((x) => now - x.t >= 0 && now - x.t < 0.9).slice(-1)[0];
+  // Label pukulan di atas pemain selama 0.9 detik (bila tidak dipindah ke panel).
+  const recent = r.style?.shotPos === 'panel' ? undefined : r.hits.filter((x) => now - x.t >= 0 && now - x.t < 0.9).slice(-1)[0];
   const sel = o.selectedHit ? r.hits.find((x) => x.id === o.selectedHit) : null;
   for (const hit of [recent, sel].filter(Boolean) as Hit[]) {
     const f = r.tracks[hit.player]?.frames[hit.frame];
@@ -131,7 +298,7 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
     const p = P({ x: f.box.x + f.box.w / 2, y: f.box.y });
     const a = hit === sel ? 1 : Math.max(0, 1 - (now - hit.t) / 0.9);
     ctx.globalAlpha = a;
-    pill(ctx, p.x, p.y - u * 3.1, shotLabel(r.sport, hit.type).toUpperCase(), INK, LIME, u * 1.15);
+    pill(ctx, p.x, p.y - u * 3.4, shotLabel(r.sport, hit.type).toUpperCase(), LIME, INK, u * 1.15);
     ctx.globalAlpha = 1;
   }
   ctx.restore();
@@ -454,9 +621,11 @@ function drawVerticalPortrait(
   stat(ctx, M + statW / 2, sy + 44, String(totalHits), 'PUKULAN', LIME, 36);
   stat(ctx, M + statW * 1.5, sy + 44, String(st.rallies), 'RELI', '#ffffff', 36);
   drawMiniCourt(ctx, r, fi, M + statW * 2 + 4, sy + 3, mapW - 8, sh - 6, true);
+  const band = r.style?.shotPos === 'panel' ? 50 : 0;
+  if (band) drawShotBanner(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, W / 2, sy + sh + G + 20, 22);
 
   // Peringkat (opsional) di bawah strip, separuh lebar agar tidak menutupi tengah video.
-  if (rk) drawRanking(ctx, rk, M, sy + sh + G, 330, 172);
+  if (rk) drawRanking(ctx, rk, M, sy + sh + G + band, 330, 172);
 
   // Bawah: satu baris kartu pemain tipis + footer.
   const n = st.players.length;
@@ -495,7 +664,24 @@ function drawVerticalPortrait(
 }
 
 /** Satu frame video ekspor (layout 9:16 atau 16:9) dengan grid & margin konsisten. */
-export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, r: Result, fi: number, layout: 'portrait' | 'landscape', showKcal: boolean) {
+export function drawExportFrame(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  r: Result,
+  fi: number,
+  layout: 'portrait' | 'landscape',
+  showKcal: boolean,
+  time?: number,
+) {
+  exportTime = time ?? null;
+  try {
+    drawExportFrameInner(ctx, video, r, fi, layout, showKcal);
+  } finally {
+    exportTime = null;
+  }
+}
+
+function drawExportFrameInner(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, r: Result, fi: number, layout: 'portrait' | 'landscape', showKcal: boolean) {
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   const st = summarize(r.frames, r.tracks, r.hits, r.sport, r.teamSize, r.weights, fi);
@@ -525,7 +711,8 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     const cardsTop = cardsBottom - rows * ch - (rows - 1) * G;
     const RH = 196;
     const rankTop = rk ? cardsTop - G - RH : cardsTop;
-    const zTop = stripY + stripH + G;
+    const shotBand = r.style?.shotPos === 'panel' ? 52 : 0;
+    const zTop = stripY + stripH + G + shotBand;
     const zBot = rankTop - G;
     const zH = zBot - zTop;
 
@@ -597,6 +784,7 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     stat(ctx, M + statW / 2, stripY + 52, String(totalHits), 'PUKULAN', LIME, 42);
     stat(ctx, M + statW * 1.5, stripY + 52, String(st.rallies), 'RELI', '#ffffff', 42);
     drawMiniCourt(ctx, r, fi, M + statW * 2 + 6, stripY + 4, mapW - 12, stripH - 8, true);
+    if (shotBand) drawShotBanner(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, W / 2, stripY + stripH + G + shotBand / 2 - 4, 24);
 
     // Peringkat (opsional) di atas kartu pemain.
     if (rk) drawRanking(ctx, rk, M, rankTop, SW, RH);
@@ -654,6 +842,7 @@ export function drawExportFrame(ctx: CanvasRenderingContext2D, video: HTMLVideoE
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
     ctx.fillText(clip(ctx, r.title, 420), M, 82);
     pillRight(ctx, W - M, 46, 'AI MATCH ANALYSIS', 13);
+    if (r.style?.shotPos === 'panel') drawShotBanner(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, W / 2, 48, 22);
 
     // Kolom kiri: statistik + daftar pemain.
     const LW = 360;
@@ -851,7 +1040,7 @@ export async function exportVideo(opts: {
           return finish();
         }
       }
-      drawExportFrame(ctx, video, r, frameAt(r, video.currentTime), layout, opts.showKcal);
+      drawExportFrame(ctx, video, r, frameAt(r, video.currentTime), layout, opts.showKcal, video.currentTime);
       opts.onProgress(Math.min(1, (video.currentTime - t0) / dur));
       requestAnimationFrame(tick);
     };

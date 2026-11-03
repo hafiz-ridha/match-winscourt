@@ -1241,6 +1241,8 @@ function ResultStep({
   const st = useMemo(() => summarize(r.frames, r.tracks, r.hits, r.sport, r.teamSize, r.weights), [r]);
   const [layout, setLayout] = useState<'portrait' | 'landscape'>('portrait');
   const [showKcal, setShowKcal] = useState(true);
+  const [shuttleAnim, setShuttleAnim] = useState(true);
+  const [shotPos, setShotPos] = useState<'panel' | 'video'>('video');
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
   const [out, setOut] = useState<{ url: string; blob: Blob; mime: string; info?: Mp4Info } | null>(null);
@@ -1290,9 +1292,10 @@ function ResultStep({
       // Utama: MP4 standar (H.264 + AAC, 30 fps konstan, faststart) yang diterima Instagram.
       // Cadangan untuk browser tanpa WebCodecs: rekaman MediaRecorder.
       const codec = await mp4Codec(layout === 'portrait' ? 720 : 1280, layout === 'portrait' ? 1280 : 720);
+      const styled: Result = { ...r, style: { shuttle: shuttleAnim, shotPos } };
       const res = codec
-        ? await exportMp4({ src, r, layout, showKcal, end, codec, onProgress: setProg, signal: signal.current })
-        : await exportVideo({ src, r, layout, showKcal, end, onProgress: setProg, signal: signal.current, audio });
+        ? await exportMp4({ src, r: styled, layout, showKcal, end, codec, onProgress: setProg, signal: signal.current })
+        : await exportVideo({ src, r: styled, layout, showKcal, end, onProgress: setProg, signal: signal.current, audio });
       setOut({ url: URL.createObjectURL(res.blob), ...res });
     } catch (e) {
       if ((e as Error).message !== 'Dibatalkan') toast((e as Error).message, true);
@@ -1462,6 +1465,26 @@ function ResultStep({
           ]}
         />
         <Switch on={showKcal} onChange={setShowKcal} label="Tampilkan kalori" hint="Perkiraan dari jarak lari & berat badan" />
+        <Switch
+          on={shuttleAnim}
+          onChange={setShuttleAnim}
+          label={`Animasi ${r.sport === 'padel' ? 'bola' : 'kok'}`}
+          hint={`Jejak lintasan ${r.sport === 'padel' ? 'bola' : 'kok'} di video`}
+        />
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="label">Label jenis pukulan</span>
+          <Seg
+            value={shotPos}
+            onChange={setShotPos}
+            options={[
+              { v: 'panel', label: 'Di atas (panel)' },
+              { v: 'video', label: 'Di dalam video' },
+            ]}
+          />
+          <span className="tiny mute">
+            {shotPos === 'panel' ? 'Pukulan terakhir tampil di panel atas, di bawah Pukulan | Reli — video tetap bersih.' : 'Label muncul sebentar di atas pemain yang memukul.'}
+          </span>
+        </div>
         {!supported && <div className="banner banner-warn small">Browser ini belum mendukung perekaman video. Coba Chrome atau Safari versi terbaru.</div>}
         {busy ? (
           <>

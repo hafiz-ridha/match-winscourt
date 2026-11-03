@@ -127,7 +127,7 @@ export async function exportMp4(opts: {
       if (failure) throw failure;
       const t = t0 + i / FPS;
       await seek(video, Math.min(t, opts.end - 0.01));
-      drawExportFrame(ctx, video, r, frameAt(r, t), layout, opts.showKcal);
+      drawExportFrame(ctx, video, r, frameAt(r, t), layout, opts.showKcal, t);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(i * usPerFrame), duration: Math.round(usPerFrame) });
       venc.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
       frame.close();
