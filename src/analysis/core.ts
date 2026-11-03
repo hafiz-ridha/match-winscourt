@@ -180,6 +180,8 @@ export interface PlayerFrame {
   noseY: number;
   /** true = hasil interpolasi (tidak terdeteksi langsung). */
   interp?: boolean;
+  /** true = posisi dari titik kunci manual. */
+  manual?: boolean;
 }
 
 export interface Track {
@@ -188,65 +190,136 @@ export interface Track {
 
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 
+/** Titik kunci manual: posisi kaki pemain (meter lapangan) pada frame tertentu. */
+export interface Anchor {
+  slot: number;
+  frame: number;
+  court: Pt;
+}
+
+/** Posisi acuan dari titik kunci: interpolasi antara kunci sebelum & sesudah frame ini. */
+function anchorRef(list: Anchor[], fi: number): { p: Pt; d: number } | null {
+  if (!list.length) return null;
+  let prev: Anchor | null = null;
+  let next: Anchor | null = null;
+  for (const a of list) {
+    if (a.frame <= fi && (!prev || a.frame > prev.frame)) prev = a;
+    if (a.frame >= fi && (!next || a.frame < next.frame)) next = a;
+  }
+  if (prev && next) {
+    if (prev.frame === next.frame) return { p: prev.court, d: 0 };
+    const r = (fi - prev.frame) / (next.frame - prev.frame);
+    return {
+      p: { x: prev.court.x + (next.court.x - prev.court.x) * r, y: prev.court.y + (next.court.y - prev.court.y) * r },
+      d: Math.min(fi - prev.frame, next.frame - fi),
+    };
+  }
+  const a = (prev ?? next)!;
+  return { p: a.court, d: Math.abs(fi - a.frame) };
+}
+
 /**
  * Pelacakan pemain: tiap sisi (dekat/jauh) diisi `teamSize` slot. Slot 0..teamSize-1 = sisi dekat
- * kamera, sisanya sisi jauh. Penugasan per frame meminimalkan jarak total ke posisi sebelumnya.
+ * kamera, sisanya sisi jauh. Tiap slot memilih deteksi terdekat ke posisi acuannya (posisi terakhir,
+ * atau titik kunci manual). Deteksi di luar jangkauan gerak yang masuk akal ditolak — mencegah titik
+ * pindah ke penonton / pemain lapangan sebelah. Di frame titik kunci, posisi pemain dipaksa ke kunci itu.
  */
-export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2): Track[] {
-  const { spec, toCourt } = calibMaps(cal);
+export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, anchors: Anchor[] = []): Track[] {
+  const { spec, toCourt, toImage } = calibMaps(cal);
   const n = teamSize * 2;
+  const dt = frameDt(frames);
   const tracks: Track[] = Array.from({ length: n }, () => ({ frames: [] }));
   const last: (Pt | null)[] = Array(n).fill(null);
   const lastSeen: number[] = Array(n).fill(-999);
+  const lastBox: (PoseObs['box'] | null)[] = Array(n).fill(null);
   const half = spec.L / 2;
+  const bySlot = Array.from({ length: n }, (_, s) => anchors.filter((a) => a.slot === s));
+  const MISS = 2.5; // biaya "tidak terdeteksi" (meter): lebih murah daripada memaksa deteksi yang jauh
 
   frames.forEach((f, fi) => {
-    const cands = f.poses
+    const all = f.poses
       .map((p) => ({ p, c: toCourt(p.foot) }))
-      .filter(({ c }) => c.x > -2 && c.x < spec.W + 2 && c.y > -3.5 && c.y < spec.L + 3.5 && Number.isFinite(c.x));
+      .filter(({ c }) => Number.isFinite(c.x) && c.x > -2 && c.x < spec.W + 2 && c.y > -3.5 && c.y < spec.L + 3.5)
+      .sort((a, b) => b.p.score - a.p.score);
+    // Buang duplikat (pose ganda untuk orang yang sama).
+    const cands = all.filter((x, i) => all.findIndex((y) => dist(y.c, x.c) < 0.5) === i);
+
     for (const side of ['near', 'far'] as const) {
       const slots = side === 'near' ? [...Array(teamSize).keys()] : [...Array(teamSize).keys()].map((i) => i + teamSize);
-      let mine = cands
-        .filter(({ c }) => (side === 'near' ? c.y >= half - 0.4 : c.y <= half + 0.4))
-        .sort((a, b) => b.p.score - a.p.score);
-      // Buang duplikat (pose ganda untuk orang yang sama).
-      mine = mine.filter((x, i) => mine.findIndex((y) => dist(y.c, x.c) < 0.5) === i).slice(0, teamSize);
-      let best: number[] = [];
-      let bestCost = Infinity;
-      const perms = teamSize === 1 ? [[0]] : [
-        [0, 1],
-        [1, 0],
-      ];
-      for (const perm of perms) {
+      const mine = cands.filter(({ c }) => (side === 'near' ? c.y >= half - 0.4 : c.y <= half + 0.4)).slice(0, 6);
+
+      // Acuan & batas jangkauan per slot.
+      const info = slots.map((slot) => {
+        const since = fi - lastSeen[slot];
+        const ar = anchorRef(bySlot[slot], fi);
+        let ref: Pt | null = last[slot] && since < 45 ? last[slot] : null;
+        let gate = ref ? 1.0 + 7 * dt * since : Infinity;
+        let aGate = Infinity;
+        if (ar) {
+          aGate = 0.9 + 3.5 * dt * ar.d;
+          if (!ref || ar.d <= since) {
+            ref = ar.p;
+            gate = aGate;
+          }
+        }
+        return { slot, ref, gate, ar, aGate };
+      });
+      const costOf = (si: number, ci: number) => {
+        const { ref, gate, ar, aGate } = info[si];
+        const c = mine[ci];
+        if (ar && dist(c.c, ar.p) > aGate) return Infinity;
+        if (ref) {
+          const d = dist(c.c, ref);
+          return d > gate ? Infinity : d;
+        }
+        // Belum ada riwayat: pilih deteksi paling yakin; kiri → slot kiri.
+        const lr = si === 0 ? c.c.x / spec.W : 1 - c.c.x / spec.W;
+        return (1 - c.p.score) + lr * 0.3;
+      };
+
+      // Penugasan optimal (maks 2 slot × 6 kandidat → brute force).
+      let best: number[] = slots.map(() => -1);
+      let bestCost = slots.length * MISS;
+      const options = [-1, ...mine.map((_, i) => i)];
+      const tryAssign = (pick: number[]) => {
         let cost = 0;
-        perm.forEach((ci, si) => {
-          const c = mine[ci];
-          const prev = last[slots[si]];
-          if (!c) return;
-          if (prev && fi - lastSeen[slots[si]] < 45) cost += dist(prev, c.c);
-          // Belum ada riwayat: pemain kiri → slot kiri (indeks kecil).
-          else cost += si === 0 ? c.c.x * 0.01 : (spec.W - c.c.x) * 0.01;
-        });
+        for (let si = 0; si < pick.length; si++) {
+          if (pick[si] < 0) cost += MISS;
+          else {
+            const k = costOf(si, pick[si]);
+            if (!Number.isFinite(k)) return;
+            cost += k;
+          }
+        }
         if (cost < bestCost) {
           bestCost = cost;
-          best = perm;
+          best = pick;
         }
-      }
+      };
+      if (slots.length === 1) for (const a of options) tryAssign([a]);
+      else for (const a of options) for (const b of options) if (a < 0 || a !== b) tryAssign([a, b]);
+
       slots.forEach((slot, si) => {
-        const c = mine[best[si]];
-        if (!c) {
-          tracks[slot].frames.push(null);
+        const ar = info[si].ar;
+        const c = best[si] >= 0 ? mine[best[si]] : null;
+        // Frame titik kunci: pakai deteksi bila tepat di kunci, selain itu posisi kunci itu sendiri.
+        if (ar && ar.d === 0 && (!c || dist(c.c, ar.p) > 0.8)) {
+          const foot = toImage(ar.p);
+          const b = lastBox[slot] ?? { x: 0, y: 0, w: 0.05, h: 0.14 };
+          const box = { x: foot.x - b.w / 2, y: foot.y - b.h, w: b.w, h: b.h };
+          const hand = { x: foot.x + b.w * 0.4, y: foot.y - b.h * 0.55 };
+          tracks[slot].frames.push({ court: ar.p, foot, box, wristL: hand, wristR: hand, shoulderY: foot.y - b.h * 0.8, noseY: foot.y - b.h * 0.92, manual: true });
+          last[slot] = ar.p;
+          lastSeen[slot] = fi;
           return;
         }
-        const prev = last[slot];
-        // Lompatan mustahil (> 9 m/s) → kemungkinan salah orang, abaikan frame ini.
-        const dt = Math.max(1, fi - lastSeen[slot]) * frameDt(frames);
-        if (prev && fi - lastSeen[slot] < 10 && dist(prev, c.c) / dt > 9) {
+        if (!c) {
           tracks[slot].frames.push(null);
           return;
         }
         last[slot] = c.c;
         lastSeen[slot] = fi;
+        lastBox[slot] = c.p.box;
         tracks[slot].frames.push({
           court: c.c,
           foot: c.p.foot,
@@ -255,6 +328,7 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2): T
           wristR: c.p.wristR,
           shoulderY: (c.p.shoulderL.y + c.p.shoulderR.y) / 2,
           noseY: c.p.nose.y,
+          manual: !!ar && ar.d === 0,
         });
       });
     }

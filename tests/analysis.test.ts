@@ -210,3 +210,43 @@ test('padel: pukulan terdeteksi, pantulan bola di lantai tidak dihitung', () => 
   const st = summarize(frames, tracks, hits, 'padel', 1, [70, 70]);
   assert.ok(st.players[0].distance > 2 && st.players[0].distance < 60);
 });
+
+test('titik kunci: penonton di pinggir lapangan tidak mencuri titik pemain', () => {
+  const frames: FrameObs[] = [];
+  const playerAt = (f: number): Pt => ({ x: 3 + Math.sin(f / 10) * 1.2, y: 11 + Math.cos(f / 14) * 0.8 });
+  for (let f = 0; f < 60; f++) {
+    const player = { ...pose(playerAt(f)), score: 0.7 };
+    // Penonton diam di luar garis samping, terdeteksi lebih yakin daripada pemain.
+    const fan = { ...pose({ x: -1.6, y: 10.5 }), score: 0.98 };
+    const far = pose({ x: 3, y: 2.5 });
+    frames.push({ t: f / 15, poses: [fan, player, far], blobs: [] });
+  }
+  const near0 = (tr: ReturnType<typeof trackPlayers>) => tr[0].frames.filter(Boolean).map((p) => p!.court.x);
+  // Tanpa kunci: mesin mengikuti deteksi paling yakin (penonton).
+  const auto = trackPlayers(frames, cal, 1);
+  assert.ok(near0(auto).every((x) => x < -1), 'tanpa kunci, slot 0 ikut penonton (kasus masalah)');
+  // Dengan kunci di frame awal pada posisi pemain: tetap mengikuti pemain sepanjang video.
+  const locked = trackPlayers(frames, cal, 1, [{ slot: 0, frame: 0, court: playerAt(0) }]);
+  locked[0].frames.forEach((p, f) => {
+    assert.ok(p, `frame ${f} terlacak`);
+    assert.ok(Math.hypot(p!.court.x - playerAt(f).x, p!.court.y - playerAt(f).y) < 0.3, `frame ${f} mengikuti pemain`);
+  });
+});
+
+test('titik kunci di tengah video memperbaiki identitas yang tertukar', () => {
+  // Dua pemain dekat bersilangan di frame 30: setelahnya mesin bisa menukar identitas.
+  const A = (f: number): Pt => ({ x: 1 + (f / 60) * 4, y: 11 });
+  const B = (f: number): Pt => ({ x: 5 - (f / 60) * 4, y: 11.2 });
+  const frames: FrameObs[] = [];
+  for (let f = 0; f < 60; f++) frames.push({ t: f / 15, poses: [pose(A(f)), pose(B(f)), pose({ x: 2, y: 2.5 }), pose({ x: 4, y: 2.5 })], blobs: [] });
+  const tr = trackPlayers(frames, cal, 2, [
+    { slot: 0, frame: 0, court: A(0) },
+    { slot: 1, frame: 0, court: B(0) },
+    { slot: 0, frame: 45, court: A(45) },
+    { slot: 1, frame: 45, court: B(45) },
+  ]);
+  for (const f of [0, 20, 45, 59]) {
+    assert.ok(Math.abs(tr[0].frames[f]!.court.x - A(f).x) < 0.3, `slot 0 = A di frame ${f}`);
+    assert.ok(Math.abs(tr[1].frames[f]!.court.x - B(f).x) < 0.3, `slot 1 = B di frame ${f}`);
+  }
+});

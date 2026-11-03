@@ -1,5 +1,5 @@
 /** Gambar overlay analisis (nama pemain, jejak kok, label pukulan, peta mini) dan ekspor video. */
-import { calibMaps, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Calib, type Hit, type Pt, type Sport, type Track } from './core.ts';
+import { calibMaps, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
 
 export const PLAYER_COLORS = ['#C6FF3D', '#2BC58A', '#38BDF8', '#FB923C'];
 const INK = '#0E1714';
@@ -24,6 +24,10 @@ export interface Result {
   names: string[];
   weights: number[];
   title: string;
+  /** Observasi mentah per frame (untuk lacak ulang setelah koreksi posisi). */
+  obs?: FrameObs[];
+  /** Titik kunci posisi pemain (manual). */
+  anchors?: Anchor[];
   /** Peringkat 5 besar (opsional, null = tidak ditampilkan). */
   ranking?: Ranking | null;
 }

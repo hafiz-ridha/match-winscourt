@@ -18,7 +18,9 @@ import {
   trackPlayers,
   trackShuttle,
   COURTS,
+  type Anchor,
   type FrameObs,
+  type Pt,
   type Quad,
   type Sport,
 } from '../analysis/core.ts';
@@ -106,6 +108,8 @@ function AnalysisApp() {
   const [clip, setClip] = useState({ start: 0, len: 60 });
   const [quad, setQuad] = useState<Quad>(DEFAULT_QUAD);
   const [nearIsA, setNearIsA] = useState(true);
+  // Penanda posisi pemain di frame awal (gambar ternormalisasi) per slot; null = tidak dikunci.
+  const [marks, setMarks] = useState<(Pt | null)[]>([]);
   const [result, setResult] = useState<Result | null>(null);
   const procVideo = useRef<HTMLVideoElement>(null);
 
@@ -209,6 +213,9 @@ function AnalysisApp() {
           setNearIsA={setNearIsA}
           teamA={setup.teamA.slice(0, setup.teamSize)}
           teamB={setup.teamB.slice(0, setup.teamSize)}
+          names={names}
+          marks={marks}
+          setMarks={setMarks}
           onBack={() => setStep(0)}
           onNext={() => setStep(2)}
         />
@@ -221,6 +228,9 @@ function AnalysisApp() {
           start={clip.start}
           end={end}
           names={names}
+          anchors={marks.flatMap((m, slot) =>
+            m && slot < setup.teamSize * 2 ? [{ slot, frame: Math.round(0.5 * FPS), court: calibMaps({ sport: setup.sport, quad, aspect: meta.aspect }).toCourt(m) }] : [],
+          )}
           onCancel={() => setStep(1)}
           onDone={(r) => {
             setResult(r);
@@ -432,6 +442,9 @@ function CalibStep({
   setNearIsA,
   teamA,
   teamB,
+  names,
+  marks,
+  setMarks,
   onBack,
   onNext,
 }: {
@@ -444,9 +457,25 @@ function CalibStep({
   setNearIsA: (v: boolean) => void;
   teamA: string[];
   teamB: string[];
+  names: string[];
+  marks: (Pt | null)[];
+  setMarks: (m: (Pt | null)[]) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
+  const [mode, setMode] = useState<'court' | 'players'>('court');
+  const [pdrag, setPdrag] = useState<number | null>(null);
+  const teamSize = names.length / 2;
+  const { spec: cspec, toImage: cToImage } = calibMaps({ sport, quad, aspect: 1 });
+  // Posisi awal penanda: tengah area main tiap pemain (kiri/kanan, dekat/jauh).
+  const markAt = (slot: number): Pt => {
+    const m = marks[slot];
+    if (m) return m;
+    const near = slot < teamSize;
+    const idx = slot % teamSize;
+    const x = teamSize === 1 ? cspec.W / 2 : cspec.W * (idx === 0 ? 0.28 : 0.72);
+    return cToImage({ x, y: near ? cspec.L * 0.8 : cspec.L * 0.2 });
+  };
   const video = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -505,13 +534,24 @@ function CalibStep({
   }, [ready, draw]);
 
   const move = (e: RPointerEvent) => {
-    if (drag === null || !box.current) return;
+    if ((drag === null && pdrag === null) || !box.current) return;
     const r = box.current.getBoundingClientRect();
     const p = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+    if (pdrag !== null) {
+      const m = [...marks];
+      m[pdrag] = p;
+      setMarks(m);
+      return;
+    }
     const q = [...quad] as Quad;
-    q[drag] = p;
+    q[drag!] = p;
     setQuad(q);
   };
+  const stopDrag = () => {
+    setDrag(null);
+    setPdrag(null);
+  };
+  const lockedCount = marks.slice(0, names.length).filter(Boolean).length;
 
   const nearNames = (nearIsA ? teamA : teamB).filter(Boolean).join(' & ') || (nearIsA ? 'Tim A' : 'Tim B');
   const farNames = (nearIsA ? teamB : teamA).filter(Boolean).join(' & ') || (nearIsA ? 'Tim B' : 'Tim A');
@@ -520,16 +560,58 @@ function CalibStep({
     <div className="stack-lg">
       <div className="card stack">
         <div>
-          <h3>Tandai lapangan</h3>
+          <h3>{mode === 'court' ? 'Tandai lapangan' : 'Kunci posisi pemain'}</h3>
           <p className="small mute">
-            Geser 4 titik ke sudut garis luar lapangan sampai <b>garis lime menempel garis putih</b>.
+            {mode === 'court' ? (
+              <>
+                Geser 4 titik ke sudut garis luar lapangan sampai <b>garis lime menempel garis putih</b>.
+              </>
+            ) : (
+              <>
+                Geser tiap penanda ke <b>kaki pemainnya</b>. Mesin akan mengikuti pemain ini dan mengabaikan penonton atau pemain lapangan lain.
+              </>
+            )}
           </p>
         </div>
-        <div className="an-calib" ref={box} onPointerMove={move} onPointerUp={() => setDrag(null)} onPointerCancel={() => setDrag(null)}>
+        <Seg
+          value={mode}
+          onChange={setMode}
+          options={[
+            { v: 'court', label: 'Garis lapangan' },
+            { v: 'players', label: `Posisi pemain${lockedCount ? ` · ${lockedCount} 🔒` : ''}` },
+          ]}
+        />
+        <div className="an-calib" ref={box} onPointerMove={move} onPointerUp={stopDrag} onPointerCancel={stopDrag}>
           <video ref={video} src={src} muted playsInline preload="auto" className="an-hidden-video" />
           <canvas ref={canvas} />
           {!ready && <div className="an-calib-wait small">Memuat frame…</div>}
-          {quad.map((p, i) => (
+          {mode === 'players' &&
+            names.map((nm, slot) => {
+              const p = markAt(slot);
+              return (
+                <button
+                  key={slot}
+                  type="button"
+                  className={`an-pmark${marks[slot] ? ' set' : ''}${pdrag === slot ? ' on' : ''}`}
+                  style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, ['--c' as string]: PLAYER_COLORS[slot % 4] }}
+                  aria-label={`Posisi ${nm}`}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                    setPdrag(slot);
+                  }}
+                  onPointerMove={move}
+                  onPointerUp={stopDrag}
+                >
+                  <span className="an-pmark-name">
+                    {marks[slot] ? '🔒 ' : ''}
+                    {nm}
+                  </span>
+                  <span className="an-pmark-dot">{slot + 1}</span>
+                </button>
+              );
+            })}
+          {mode === 'court' && quad.map((p, i) => (
             <button
               key={i}
               type="button"
@@ -548,10 +630,23 @@ function CalibStep({
             </button>
           ))}
         </div>
-        <div className="tiny mute">1 kiri jauh · 2 kanan jauh · 3 kanan dekat · 4 kiri dekat (dilihat dari kamera)</div>
-        <button className="btn btn-ghost btn-sm" onClick={() => setQuad(DEFAULT_QUAD)}>
-          Ulangi titik
-        </button>
+        {mode === 'court' ? (
+          <>
+            <div className="tiny mute">1 kiri jauh · 2 kanan jauh · 3 kanan dekat · 4 kiri dekat (dilihat dari kamera)</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setQuad(DEFAULT_QUAD)}>
+              Ulangi titik
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="tiny mute">
+              Opsional tapi sangat disarankan. Hanya penanda yang digeser yang dikunci ({lockedCount}/{names.length}). Posisi juga bisa dikoreksi nanti di langkah Periksa.
+            </div>
+            <button className="btn btn-ghost btn-sm" disabled={!lockedCount} onClick={() => setMarks([])}>
+              Hapus kunci posisi
+            </button>
+          </>
+        )}
       </div>
 
       <div className="card stack">
@@ -597,6 +692,7 @@ function ProcessStep({
   start,
   end,
   names,
+  anchors,
   onCancel,
   onDone,
 }: {
@@ -606,6 +702,7 @@ function ProcessStep({
   start: number;
   end: number;
   names: string[];
+  anchors: Anchor[];
   onCancel: () => void;
   onDone: (r: Result) => void;
 }) {
@@ -659,7 +756,7 @@ function ProcessStep({
         setProgress(1);
         await new Promise((r) => setTimeout(r, 30));
         const calib = { sport: cal.sport, quad: cal.quad, aspect: cal.aspect };
-        const tracks = trackPlayers(obs, calib, setup.teamSize);
+        const tracks = trackPlayers(obs, calib, setup.teamSize, anchors);
         const shuttle = trackShuttle(obs, tracks, cal.aspect);
         const hits = detectHits(obs, tracks, shuttle, cal.sport, setup.teamSize);
         onDone({
@@ -673,6 +770,8 @@ function ProcessStep({
           hits,
           names,
           weights: names.map(() => 65),
+          obs,
+          anchors,
           title: setup.title,
         });
       } catch (e) {
@@ -773,6 +872,9 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
   const [rate, setRate] = useState(1);
   const [sel, setSel] = useState<string | null>(null);
   const locked = useRef(new Set<string>());
+  const playerBox = useRef<HTMLDivElement>(null);
+  const [fixPos, setFixPos] = useState(false);
+  const [pdrag, setPdrag] = useState<{ slot: number; p: Pt } | null>(null);
   const dt = frameDt(r.frames);
   const t0 = r.frames[0]?.t ?? r.start;
   const t1 = r.frames[r.frames.length - 1]?.t ?? r.start;
@@ -863,6 +965,37 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
   const selected = r.hits.find((h) => h.id === sel) ?? null;
   const counts = r.names.map((_, i) => r.hits.filter((h) => h.player === i).length);
 
+  // Koreksi posisi: geser penanda pemain di frame ini → titik kunci → lacak ulang semua pemain.
+  const fiNow = frameAt(r, t);
+  const anchors = r.anchors ?? [];
+  const footAt = (slot: number): Pt => {
+    const tr = r.tracks[slot];
+    for (let k = 0; k < 30; k++) {
+      const f = tr?.frames[fiNow - k] ?? tr?.frames[fiNow + k];
+      if (f) return f.foot;
+    }
+    const { spec, toImage } = calibMaps(r.cal);
+    const near = slot < r.teamSize;
+    return toImage({ x: spec.W * (r.teamSize === 1 ? 0.5 : slot % r.teamSize ? 0.72 : 0.28), y: near ? spec.L * 0.8 : spec.L * 0.2 });
+  };
+  const pointer = (e: RPointerEvent): Pt | null => {
+    const b = playerBox.current?.getBoundingClientRect();
+    if (!b) return null;
+    return { x: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), y: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)) };
+  };
+  const retrack = (list: Anchor[]) => {
+    if (!r.obs) return;
+    const next: Result = { ...r, anchors: list, tracks: trackPlayers(r.obs, r.cal, r.teamSize, list), hits: r.hits.map((h) => ({ ...h })) };
+    classifyAll(next.hits, next.frames, next.tracks, next.shuttle, next.sport, next.teamSize, locked.current);
+    setR(next);
+  };
+  const commitPos = () => {
+    if (!pdrag) return;
+    const court = calibMaps(r.cal).toCourt(pdrag.p);
+    retrack([...anchors.filter((a) => !(a.slot === pdrag.slot && a.frame === fiNow)), { slot: pdrag.slot, frame: fiNow, court }]);
+    setPdrag(null);
+  };
+
   return (
     <div className="stack-lg">
       <div className="card stack">
@@ -873,9 +1006,38 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
         <p className="small mute">
           Geser garis waktu. Ketuk tanda bulat untuk mengubah pemukul atau jenis pukulan. Ada pukulan terlewat? Berhenti di saat raket kena {r.sport === 'padel' ? 'bola' : 'kok'}, tekan <b>+</b>. Salah deteksi? Pilih lalu tekan <b>−</b>.
         </p>
-        <div className="an-player">
+        <div className="an-player" ref={playerBox} onPointerMove={(e) => pdrag && setPdrag({ slot: pdrag.slot, p: pointer(e) ?? pdrag.p })} onPointerUp={commitPos}>
           <video ref={video} src={src} playsInline muted preload="auto" onClick={() => (video.current?.paused ? video.current.play() : video.current?.pause())} />
           <canvas ref={canvas} />
+          {fixPos &&
+            !playing &&
+            r.names.map((nm, slot) => {
+              const p = pdrag?.slot === slot ? pdrag.p : footAt(slot);
+              const isLocked = anchors.some((a) => a.slot === slot && a.frame === fiNow);
+              return (
+                <button
+                  key={slot}
+                  type="button"
+                  className={`an-pmark${isLocked ? ' set' : ''}${pdrag?.slot === slot ? ' on' : ''}`}
+                  style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, ['--c' as string]: PLAYER_COLORS[slot % 4] }}
+                  aria-label={`Geser posisi ${nm}`}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                    setPdrag({ slot, p });
+                  }}
+                  onPointerMove={(e) => pdrag && setPdrag({ slot, p: pointer(e) ?? p })}
+                  onPointerUp={commitPos}
+                >
+                  <span className="an-pmark-name">
+                    {isLocked ? '🔒 ' : ''}
+                    {nm}
+                  </span>
+                  <span className="an-pmark-dot">{slot + 1}</span>
+                </button>
+              );
+            })}
           <div className="an-fab">
             <button className="an-fab-btn minus" disabled={!selected} aria-label="Hapus pukulan terpilih" onClick={() => selected && (update((n) => (n.hits = n.hits.filter((h) => h.id !== selected.id))), setSel(null))}>
               −
@@ -925,6 +1087,33 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
             <span className="an-head-line" style={{ left: 16 + (t - t0) * PX }} />
           </div>
         </div>
+
+        <div className="an-fixbar">
+          <button
+            className={`btn btn-sm ${fixPos ? 'btn-dark' : 'btn-ghost'}`}
+            onClick={() => {
+              video.current?.pause();
+              setFixPos(!fixPos);
+            }}
+          >
+            {fixPos ? 'Selesai koreksi' : 'Koreksi posisi pemain'}
+          </button>
+          {anchors.length > 0 && (
+            <>
+              <span className="tiny mute">{anchors.length} titik terkunci</span>
+              <button className="btn btn-ghost btn-xs" onClick={() => retrack([])}>
+                Hapus kunci
+              </button>
+            </>
+          )}
+        </div>
+        {fixPos && (
+          <div className="banner banner-lime small">
+            <span>
+              Hentikan video di frame yang titiknya salah, lalu geser penanda ke <b>kaki pemain</b>. Posisi terkunci 🔒 dan jalur pemain dihitung ulang otomatis.
+            </span>
+          </div>
+        )}
 
         <div className="row" style={{ justifyContent: 'center', gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => go(t - dt)} aria-label="Mundur 1 frame">
