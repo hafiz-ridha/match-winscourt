@@ -753,7 +753,7 @@ function drawVerticalPortrait(
   ctx.fillText('wins-court.com', W / 2, H - 30);
   ctx.font = F(600, 11);
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 12);
+  ctx.fillText('Versi Beta - angka perkiraan AI dari video http://match.wins-court.com', W / 2, H - 12);
 }
 
 /** Satu frame video ekspor (layout 9:16 atau 16:9) dengan grid & margin konsisten. */
@@ -896,7 +896,7 @@ function drawExportFrameInner(ctx: CanvasRenderingContext2D, video: HTMLVideoEle
     ctx.fillText('wins-court.com', W / 2, H - 46);
     ctx.font = F(600, 13);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('Beta · angka perkiraan AI dari video', W / 2, H - 22);
+    ctx.fillText('Versi Beta - angka perkiraan AI dari video http://match.wins-court.com', W / 2, H - 22);
   } else {
     const M = 28;
     const G = 14;
@@ -989,7 +989,7 @@ function drawExportFrameInner(ctx: CanvasRenderingContext2D, video: HTMLVideoEle
     ctx.textAlign = 'left';
     ctx.font = F(600, 12);
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText('Beta · perkiraan AI', M, H - 24);
+    ctx.fillText('Versi Beta - angka perkiraan AI dari video http://match.wins-court.com', M, H - 24);
   }
 }
 
