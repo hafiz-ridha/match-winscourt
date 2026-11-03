@@ -1762,8 +1762,12 @@ input[type='range'] {
   margin: 0;
   padding-left: 18px;
 }
+/* Kotak video mengikuti rasio asli video (horizontal maupun vertikal), tidak dipaksa 16:9. */
 .an-calib {
   position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
   border-radius: 16px;
   overflow: hidden;
   background: #0e1714;
@@ -1773,9 +1777,10 @@ input[type='range'] {
 }
 .an-calib canvas {
   display: block;
-  width: 100%;
+  max-width: 100%;
+  max-height: 62vh;
+  width: auto;
   height: auto;
-  min-height: 160px;
 }
 .an-calib-wait {
   position: absolute;
@@ -1816,10 +1821,14 @@ input[type='range'] {
   background: var(--surface);
 }
 .an-proc-preview {
-  width: 100%;
+  display: block;
+  max-width: 100%;
+  max-height: 50vh;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
   border-radius: 14px;
   background: #0e1714;
-  aspect-ratio: 16 / 9;
 }
 .an-bar {
   height: 10px;
@@ -1836,14 +1845,19 @@ input[type='range'] {
 }
 .an-player {
   position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
   border-radius: 16px;
   overflow: hidden;
   background: #000;
 }
 .an-player video {
   display: block;
-  width: 100%;
+  max-width: 100%;
   max-height: 62vh;
+  width: auto;
+  height: auto;
 }
 .an-player canvas {
   position: absolute;
