@@ -29,6 +29,8 @@ import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
 import { LoginCard } from './Home.tsx';
 
 const FPS = 15;
+/** Nilai panjang klip = sampai akhir video. */
+const ALL_CLIP = 9999;
 const STEPS = ['Video', 'Lapangan', 'Proses', 'Periksa', 'Hasil'];
 const DEFAULT_QUAD: Quad = [
   { x: 0.36, y: 0.4 },
@@ -190,7 +192,8 @@ function AnalysisApp() {
           }}
           onMeta={(m) => {
             setMeta(m);
-            setClip((c) => ({ start: Math.min(c.start, Math.max(0, m.duration - 5)), len: c.len }));
+            // Video pendek (≤ 60 dtk): langsung dianalisis seluruhnya.
+            setClip({ start: 0, len: m.duration <= 60 ? ALL_CLIP : 60 });
           }}
           onNext={() => setStep(1)}
         />
@@ -265,7 +268,11 @@ function SetupStep({
     const v = preview.current;
     if (v && meta) v.currentTime = clip.start + 0.1;
   }, [clip.start, meta]);
-  const maxLen = meta ? Math.max(5, meta.duration - clip.start) : 120;
+  // Sisa durasi dari titik mulai; pilihan panjang yang melebihi sisa ini disembunyikan.
+  const remain = meta ? Math.max(0.5, meta.duration - clip.start) : 120;
+  const lenOptions = [30, 60, 90, 120].filter((x) => x < remain - 1).map((x) => ({ v: x, label: `${x} dtk` }));
+  if (remain <= 121) lenOptions.push({ v: ALL_CLIP, label: `Semua · ${mmss(remain)}` });
+  const lenValue = remain <= 121 && clip.len >= remain - 1 ? ALL_CLIP : Math.min(clip.len, 120);
   return (
     <div className="stack-lg">
       <div className="card stack">
@@ -384,11 +391,8 @@ function SetupStep({
                   />
                 </label>
                 <span className="label">Panjang yang dianalisis</span>
-                <Seg
-                  value={Math.min(clip.len, 120)}
-                  onChange={(v) => setClip({ ...clip, len: v })}
-                  options={[30, 60, 90, 120].filter((x, i) => i === 0 || x - 30 < maxLen).map((x) => ({ v: x, label: `${x} dtk` }))}
-                />
+                <Seg value={lenValue} onChange={(v) => setClip({ ...clip, len: v })} options={lenOptions} />
+                {meta.duration < 2 && <div className="banner banner-warn small">Video terlalu pendek. Pakai video minimal 2 detik.</div>}
               </div>
             )}
             {meta && meta.duration === 0 && <div className="banner banner-danger">Video ini tidak bisa dibaca browser. Coba rekam ulang dalam format MP4 (H.264).</div>}
@@ -409,7 +413,7 @@ function SetupStep({
         </ul>
       </div>
 
-      <button className="btn btn-primary btn-lg btn-block" disabled={!src || !meta || meta.duration === 0} onClick={onNext}>
+      <button className="btn btn-primary btn-lg btn-block" disabled={!src || !meta || meta.duration < 2} onClick={onNext}>
         Lanjut: tandai lapangan
       </button>
     </div>
