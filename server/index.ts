@@ -9,6 +9,8 @@ import { applyAction, cleanName, HttpError, newPlayer, type Role } from './actio
 import { accounts, hostById, hosts, playerTokens, sessions, type Host } from './db.ts';
 import { findBookings, isMock, MOCK_ACCOUNTS } from './winscourt.ts';
 import { adminRouter } from './admin.ts';
+import { emailDomainVerdict } from './mailcheck.ts';
+import { emailDomain, emailIssue, phoneIssue } from '../shared/contact.ts';
 import { modelsRouter } from './models.ts';
 
 const app = express();
@@ -173,7 +175,6 @@ api.post('/auth/login', async (req, res) => {
 
 /* ---------- akun umum: nama + email + no. HP + PIN 6 digit ---------- */
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function weakPin(pin: string): boolean {
   if (/^(\d)\1{5}$/.test(pin)) return true; // 000000, 111111, …
@@ -188,17 +189,23 @@ const accountJson = (host: Host, email: string | null) => ({
   email: email ? email.replace(/^(.).*?(@.*)$/, '$1•••$2') : null,
 });
 
-api.post('/auth/register', (req, res) => {
+api.post('/auth/register', async (req, res) => {
   const name = cleanName(req.body?.name).slice(0, 60);
   const email = String(req.body?.email ?? '').trim().toLowerCase().slice(0, 120);
   const phone = normalizePhone(String(req.body?.phone ?? ''));
   const pin = String(req.body?.pin ?? '');
   if (name.length < 2) throw new HttpError(400, 'Isi nama lengkap');
-  if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Format email tidak valid');
-  if (!/^62\d{8,13}$/.test(phone)) throw new HttpError(400, 'No. HP tidak valid (contoh: 0812xxxxxxx)');
+  // Tanpa OTP: tolak email & no. HP yang jelas asal-asalan (format, salah ketik, email sementara,
+  // domain tanpa server email, awalan operator tidak dikenal, angka berulang/berurutan).
+  const eIssue = emailIssue(email);
+  if (eIssue) throw new HttpError(400, eIssue);
+  const pIssue = phoneIssue(phone);
+  if (pIssue) throw new HttpError(400, pIssue);
   if (!/^\d{6}$/.test(pin)) throw new HttpError(400, 'PIN harus 6 angka');
   if (weakPin(pin)) throw new HttpError(400, 'PIN terlalu mudah ditebak. Hindari angka sama atau berurutan.');
   rateLimit(`reg:${phone}`);
+  if ((await emailDomainVerdict(emailDomain(email))) === 'none')
+    throw new HttpError(400, `Domain email "${emailDomain(email)}" tidak ditemukan atau tidak bisa menerima email. Periksa lagi alamat emailnya.`);
   if (accounts.byEmail(email)) throw new HttpError(409, 'Email sudah terdaftar. Silakan masuk.');
   const existing = hosts.byPhone(phone);
   if (existing && accounts.byHost(existing.id)) throw new HttpError(409, 'No. HP sudah terdaftar. Silakan masuk.');

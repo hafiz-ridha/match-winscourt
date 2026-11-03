@@ -1,8 +1,9 @@
+import { emailIssue, emailSuggestion, phoneIssue } from '../../shared/contact.ts';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { courtLabels, formatInfo, MANUAL_RETENTION_DAYS } from '../../shared/formats.ts';
 import type { Booking, Sport } from '../../shared/types.ts';
-import { fmtDate, fmtTime } from '../../shared/util.ts';
+import { fmtDate, fmtTime, normalizePhone } from '../../shared/util.ts';
 import { api, auth, type Me } from '../api.ts';
 import { CourtArt } from '../components/CourtArt.tsx';
 import { Arrow, Ball, Court, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
@@ -81,6 +82,11 @@ function AccountAuth({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
+  // Petunjuk langsung (server tetap memeriksa ulang, termasuk server email domain).
+  const emailHint = email.includes('@') && email.split('@')[1]?.includes('.') ? emailIssue(email) : null;
+  const emailFix = emailSuggestion(email);
+  const phoneDigits = phone.replace(/D/g, '');
+  const phoneHint = phoneDigits.length >= 10 ? phoneIssue(normalizePhone(phone)) : null;
   return (
     <div className="stack">
       <p className="small mute">Untuk host yang tidak booking di Wins Court. Buat sesi sendiri: pilih olahraga, jam main, dan jumlah lapangan.</p>
@@ -124,16 +130,35 @@ function AccountAuth({ onDone }: { onDone: () => void }) {
           <label className="field">
             <span className="label">Email</span>
             <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="nama@email.com" required />
+            {emailHint &&
+              (emailFix ? (
+                <span className="hint" style={{ color: 'var(--warn)' }}>
+                  Maksudnya{' '}
+                  <button type="button" className="linkbtn" onClick={() => setEmail(emailFix)}>
+                    <b>{emailFix}</b>
+                  </button>
+                  ?
+                </span>
+              ) : (
+                <span className="hint" style={{ color: 'var(--danger)' }}>
+                  {emailHint}
+                </span>
+              ))}
           </label>
           <label className="field">
             <span className="label">No. HP</span>
             <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="tel" placeholder="08xx xxxx xxxx" required />
+            {phoneHint && (
+              <span className="hint" style={{ color: 'var(--danger)' }}>
+                {phoneHint}
+              </span>
+            )}
           </label>
           {pinField(pin, setPin, 'Buat PIN (6 angka)', 'new-password')}
           {pinField(pin2, setPin2, 'Ulangi PIN', 'new-password')}
           <p className="hint">Hindari angka sama atau berurutan (mis. 111111, 123456).</p>
           {error && <div className="banner banner-danger">{error}</div>}
-          <button className="btn btn-primary btn-block" disabled={busy || pin.length !== 6 || pin2.length !== 6}>
+          <button className="btn btn-primary btn-block" disabled={busy || pin.length !== 6 || pin2.length !== 6 || !!emailHint || !!phoneHint}>
             Daftar & masuk <Arrow size={18} />
           </button>
         </form>

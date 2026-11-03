@@ -2145,3 +2145,13 @@ input[type='range'] {
   align-items: center;
   gap: 8px;
 }
+/* Tombol bergaya tautan (mis. saran perbaikan email) */
+.linkbtn {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--lime-deep);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
