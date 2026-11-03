@@ -1275,6 +1275,8 @@ function ResultStep({
     try {
       const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       audio = AC ? new AC() : null;
+      // Diaktifkan langsung di dalam ketukan (syarat iPhone untuk suara).
+      void audio?.resume().catch(() => {});
     } catch {
       audio = null;
     }

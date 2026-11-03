@@ -747,14 +747,19 @@ export async function exportVideo(opts: {
   const { r, layout } = opts;
   const mime = recorderMime();
   if (!mime) throw new Error('Browser ini belum bisa merekam video. Coba Chrome atau Safari terbaru.');
+  // Dipasang di halaman (hampir tak terlihat): browser HP menjeda video yang tidak ada di halaman.
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
+  document.body.appendChild(holder);
   const video = document.createElement('video');
+  holder.appendChild(video);
   video.src = opts.src;
   video.playsInline = true;
   video.preload = 'auto';
   video.crossOrigin = 'anonymous';
   await new Promise<void>((res, rej) => {
     video.onloadeddata = () => res();
-    video.onerror = () => rej(new Error('Video tidak bisa dibaca ulang'));
+    video.onerror = () => (holder.remove(), rej(new Error('Video tidak bisa dibaca ulang')));
     video.load();
   });
   const canvas = document.createElement('canvas');
@@ -762,14 +767,19 @@ export async function exportVideo(opts: {
   canvas.height = layout === 'portrait' ? 1280 : 720;
   const ctx = canvas.getContext('2d')!;
   const stream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30);
+  // Suara: hanya bila AudioContext benar-benar berjalan. Di iPhone, video yang dialirkan ke
+  // AudioContext yang masih "suspended" bisa macet setelah beberapa detik.
   let muted = true;
   if (opts.audio) {
     try {
-      const srcNode = opts.audio.createMediaElementSource(video);
-      const dest = opts.audio.createMediaStreamDestination();
-      srcNode.connect(dest);
-      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-      muted = false;
+      if (opts.audio.state !== 'running') await opts.audio.resume();
+      if (opts.audio.state === 'running') {
+        const srcNode = opts.audio.createMediaElementSource(video);
+        const dest = opts.audio.createMediaStreamDestination();
+        srcNode.connect(dest);
+        dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+        muted = false;
+      }
     } catch {
       /* tanpa suara */
     }
@@ -787,18 +797,59 @@ export async function exportVideo(opts: {
   const t0 = r.start;
   const dur = Math.max(0.5, opts.end - t0);
   drawExportFrame(ctx, video, r, 0, layout, opts.showKcal);
-  rec.start(500);
+
+  // Layar tetap menyala selama merekam.
+  let lock: { release(): Promise<void> } | null = null;
+  try {
+    lock = (await (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen')) ?? null;
+  } catch {
+    /* tidak didukung */
+  }
+
+  // Tanpa timeslice: satu file utuh saat berhenti (Safari: durasi & isi file benar).
+  rec.start();
   try {
     await video.play();
   } catch {
     video.muted = true;
     await video.play();
   }
+
+  let failure: string | null = null;
+  let reached = t0;
   await new Promise<void>((res) => {
+    let lastT = video.currentTime;
+    let lastMove = performance.now();
+    const finish = () => {
+      document.removeEventListener('visibilitychange', onHide);
+      video.pause();
+      res();
+    };
+    const onHide = () => {
+      if (document.hidden) {
+        failure = 'Pembuatan video berhenti karena layar mati atau aplikasi ditinggalkan. Ulangi dan biarkan halaman tetap terbuka sampai selesai.';
+        finish();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
     const tick = () => {
-      if (opts.signal.cancelled || video.ended || video.currentTime >= opts.end) {
-        video.pause();
-        return res();
+      if (failure) return;
+      if (opts.signal.cancelled || video.ended || video.currentTime >= opts.end - 0.05) {
+        reached = Math.max(reached, video.ended ? opts.end : video.currentTime);
+        return finish();
+      }
+      const now = performance.now();
+      if (video.currentTime > lastT + 0.001) {
+        lastT = video.currentTime;
+        lastMove = now;
+        reached = lastT;
+      } else {
+        // Browser menjeda video (hemat daya / tersembunyi): putar lagi; bila tetap macet, hentikan dengan pesan.
+        if (video.paused) video.play().catch(() => {});
+        if (now - lastMove > 4000) {
+          failure = `Pemutaran video macet di ${Math.floor(lastT / 60)}:${String(Math.floor(lastT % 60)).padStart(2, '0')}. Coba lagi, atau matikan "Tampilkan kalori"/pilih 16:9 bila HP lambat.`;
+          return finish();
+        }
       }
       drawExportFrame(ctx, video, r, frameAt(r, video.currentTime), layout, opts.showKcal);
       opts.onProgress(Math.min(1, (video.currentTime - t0) / dur));
@@ -809,8 +860,14 @@ export async function exportVideo(opts: {
   rec.stop();
   await stopped;
   stream.getTracks().forEach((t) => t.stop());
+  lock?.release().catch(() => {});
+  holder.remove();
   video.removeAttribute('src');
   video.load();
   if (opts.signal.cancelled) throw new Error('Dibatalkan');
+  if (failure) throw new Error(failure);
+  // Jangan pernah memberikan file yang terpotong diam-diam.
+  if (reached - t0 < dur - 1) throw new Error(`Video hanya terekam ${Math.round(reached - t0)} dari ${Math.round(dur)} detik. Ulangi dan biarkan layar tetap terbuka.`);
   return { blob: new Blob(chunks, { type: mime.split(';')[0] }), mime };
 }
+
