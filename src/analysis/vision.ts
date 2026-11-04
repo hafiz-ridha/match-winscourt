@@ -96,7 +96,18 @@ export class FrameProcessor {
 
   /** Proses frame video saat ini. */
   process(t: number): FrameObs {
-    const poses = [...this.poseIn('near'), ...this.poseIn('far')];
+    const near = this.poseIn('near');
+    // Kamera rendah: badan atas pemain dekat ikut masuk potongan "sisi jauh". Deteksi jauh yang
+    // bertumpuk dengan pemain dekat dibuang supaya tidak terbaca sebagai pemain jauh.
+    const far = this.poseIn('far').filter(
+      (f) =>
+        !near.some((n) => {
+          const cx = f.box.x + f.box.w / 2;
+          const cy = f.box.y + f.box.h / 2;
+          return cx > n.box.x - n.box.w * 0.1 && cx < n.box.x + n.box.w * 1.1 && cy > n.box.y - n.box.h * 0.1 && cy < n.box.y + n.box.h * 1.1;
+        }),
+    );
+    const poses = [...near, ...far];
     const blobs = this.motion();
     return { t, poses, blobs };
   }
@@ -128,16 +139,21 @@ export class FrameProcessor {
       return [];
     }
     const map = (p: { x: number; y: number }) => ({ x: r.x + p.x * r.w, y: r.y + p.y * r.h });
-    return (res.landmarks ?? []).map((l) => {
+    const out: PoseObs[] = [];
+    for (const l of res.landmarks ?? []) {
       const pts = l.map(map);
       const vis = l.map((p) => p.visibility ?? 1);
       const xs = pts.map((p) => p.x);
       const ys = pts.map((p) => p.y);
-      const footIdx = [27, 28, 29, 30, 31, 32].filter((i) => vis[i] > 0.2);
-      const fy = footIdx.length ? Math.max(...footIdx.map((i) => pts[i].y)) : Math.max(...ys);
-      const fx = footIdx.length ? footIdx.reduce((s, i) => s + pts[i].x, 0) / footIdx.length : (pts[23].x + pts[24].x) / 2;
+      // Posisi di lapangan diambil dari KAKI. Pose yang kakinya tidak terlihat, atau terpotong tepi
+      // bawah potongan gambar (mis. badan atas pemain dekat di potongan sisi jauh), tidak dipakai —
+      // titik "kaki" tebakannya akan jatuh di tempat yang salah.
+      const footIdx = [27, 28, 29, 30, 31, 32].filter((i) => vis[i] > 0.35 && l[i].y >= 0 && l[i].y <= 0.97);
+      if (!footIdx.length) continue;
+      const fy = Math.max(...footIdx.map((i) => pts[i].y));
+      const fx = footIdx.reduce((s, i) => s + pts[i].x, 0) / footIdx.length;
       const score = vis.slice(11, 29).reduce((a, b) => a + b, 0) / 18;
-      return {
+      out.push({
         foot: { x: fx, y: fy },
         box: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) },
         wristL: pts[15],
@@ -146,8 +162,9 @@ export class FrameProcessor {
         shoulderR: pts[12],
         nose: pts[0],
         score,
-      };
-    });
+      });
+    }
+    return out;
   }
 
   /** Kandidat kok/bola: piksel yang berbeda dari 2 frame sebelumnya, dikelompokkan jadi blob kecil. */

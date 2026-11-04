@@ -154,25 +154,33 @@ export function courtLines(spec: CourtSpec): [Pt, Pt][] {
 
 /** Kotak (gambar, ternormalisasi) yang mencakup satu sisi lapangan + ruang tinggi pemain. */
 export function sideRegion(cal: Calib, side: 'near' | 'far') {
-  const { spec, toImage } = calibMaps(cal);
+  const spec = COURTS[cal.sport];
+  const h = homography(refPoints(spec, cal.ref), cal.quad);
   const y0 = side === 'far' ? -2.5 : spec.L / 2 - 0.3;
   const y1 = side === 'far' ? spec.L / 2 + 0.3 : spec.L + 2.5;
-  const pts = [
+  // Titik di BELAKANG kamera (kamera dekat baseline) membuat proyeksi terbalik → diabaikan.
+  const proj = (p: Pt) => (h[6] * p.x + h[7] * p.y + h[8] > 1e-6 ? apply(h, p) : null);
+  const raw = [
     { x: -1.5, y: y0 },
     { x: spec.W + 1.5, y: y0 },
     { x: spec.W + 1.5, y: y1 },
     { x: -1.5, y: y1 },
-  ].map(toImage);
+  ].map(proj);
+  const pts = raw.filter((p): p is Pt => !!p && Number.isFinite(p.x) && Number.isFinite(p.y));
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const behind = pts.length < raw.length;
   const xs = pts.map((p) => p.x);
   const ys = pts.map((p) => p.y);
-  let x0 = Math.min(...xs);
-  let x1 = Math.max(...xs);
-  let yA = Math.min(...ys);
-  const yB = Math.max(...ys);
+  let x0 = behind || !xs.length ? 0 : Math.min(...xs);
+  let x1 = behind || !xs.length ? 1 : Math.max(...xs);
+  let yA = ys.length ? Math.min(...ys) : 0;
+  // Sisi dekat selalu sampai dasar frame: pemain dekat ada di bawah gambar, dan kakinya harus ikut terpotong masuk.
+  const yB = side === 'near' || behind || !ys.length ? 1 : Math.max(...ys);
   // Tinggi badan pemain (~1.8 m) di gambar ≈ 0.9× lebar lapangan setempat; ambil ke atas.
-  const widthAtTop = Math.abs(pts[1].x - pts[0].x);
+  const top0 = raw[0];
+  const top1 = raw[1];
+  const widthAtTop = top0 && top1 ? Math.abs(top1.x - top0.x) : 1;
   yA -= Math.max(0.12, widthAtTop * 0.75);
-  const clamp = (v: number) => Math.min(1, Math.max(0, v));
   x0 = clamp(x0);
   x1 = clamp(x1);
   return { x: x0, y: clamp(yA), w: Math.max(0.05, x1 - x0), h: Math.max(0.05, clamp(yB) - clamp(yA)) };
