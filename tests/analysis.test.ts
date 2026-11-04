@@ -312,3 +312,29 @@ test('kalibrasi fleksibel: setengah lapangan & garis servis menghasilkan peta ya
     }
   }
 });
+
+test('kunci pemain sisi jauh: deteksi berisik & hilang tetap terkunci di antara titik kunci', () => {
+  const far = (f: number): Pt => ({ x: 2 + (f / 60) * 2, y: 2.5 + Math.sin(f / 9) * 0.6 });
+  const frames: FrameObs[] = [];
+  for (let f = 0; f <= 60; f++) {
+    const poses = [pose({ x: 3, y: 11 })];
+    // Deteksi jauh berisik ±1,2 m (perspektif) dan hilang di frame 20–39.
+    if (f < 20 || f >= 40) poses.push(pose({ x: far(f).x + Math.sin(f * 1.7) * 0.4, y: far(f).y + Math.cos(f * 2.3) * 1.2 }));
+    // Pemain lapangan sebelah di belakang baseline jauh — tidak boleh diambil.
+    poses.push(pose({ x: 5.8, y: 0.2 }));
+    frames.push({ t: f / 15, poses, blobs: [] });
+  }
+  const tr = trackPlayers(frames, cal, 1, [
+    { slot: 1, frame: 0, court: far(0) },
+    { slot: 1, frame: 60, court: far(60) },
+  ]);
+  const missing = tr[1].frames.filter((x) => !x).length;
+  assert.equal(missing, 0, `frame kosong ${missing}`);
+  for (let f = 0; f <= 60; f++) {
+    const p = tr[1].frames[f]!;
+    assert.ok(Math.abs(p.court.x - far(f).x) < 1.2 && Math.abs(p.court.y - far(f).y) < 1.8, `frame ${f} tetap di pemain (${p.court.x.toFixed(1)},${p.court.y.toFixed(1)})`);
+  }
+  // Kotak badan posisi manual pemain jauh lebih kecil dari pemain dekat.
+  const manual = tr[1].frames[30]!;
+  assert.ok(manual.manual && manual.box.h < tr[0].frames[30]!.box.h, 'penanda pemain jauh berukuran sesuai perspektif');
+});

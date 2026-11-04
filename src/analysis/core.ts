@@ -232,7 +232,7 @@ export interface Anchor {
 }
 
 /** Posisi acuan dari titik kunci: interpolasi antara kunci sebelum & sesudah frame ini. */
-function anchorRef(list: Anchor[], fi: number): { p: Pt; d: number } | null {
+function anchorRef(list: Anchor[], fi: number): { p: Pt; d: number; between?: boolean } | null {
   if (!list.length) return null;
   let prev: Anchor | null = null;
   let next: Anchor | null = null;
@@ -246,6 +246,7 @@ function anchorRef(list: Anchor[], fi: number): { p: Pt; d: number } | null {
     return {
       p: { x: prev.court.x + (next.court.x - prev.court.x) * r, y: prev.court.y + (next.court.y - prev.court.y) * r },
       d: Math.min(fi - prev.frame, next.frame - fi),
+      between: true,
     };
   }
   const a = (prev ?? next)!;
@@ -269,6 +270,32 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
   const half = spec.L / 2;
   const bySlot = Array.from({ length: n }, (_, s) => anchors.filter((a) => a.slot === s));
   const MISS = 2.5; // biaya "tidak terdeteksi" (meter): lebih murah daripada memaksa deteksi yang jauh
+  /**
+   * Toleransi tambahan (meter) karena perspektif: di sisi jauh, selisih ±1,2% lebar gambar setara
+   * jarak yang jauh lebih besar di lapangan. Tanpa ini, deteksi pemain jauh yang benar sering ditolak.
+   */
+  const tol = (p: Pt) => {
+    const a = toImage(p);
+    const sx = Math.abs(toImage({ x: p.x + 1, y: p.y }).x - a.x) || 1e-3;
+    const sy = Math.abs(toImage({ x: p.x, y: p.y + 1 }).y - a.y) || 1e-3;
+    return Math.min(4, Math.max(0.012 / sx, 0.012 / sy));
+  };
+  /** Kotak badan perkiraan dari perspektif (tinggi ±1,7 m) untuk posisi manual. */
+  const bodyBox = (p: Pt, foot: Pt) => {
+    const sx = Math.abs(toImage({ x: p.x + 1, y: p.y }).x - foot.x) || 0.02;
+    const h = Math.min(0.5, 1.7 * sx * cal.aspect);
+    const w = Math.max(0.01, 0.5 * sx);
+    return { x: foot.x - w / 2, y: foot.y - h, w, h };
+  };
+  const manualFrame = (slot: number, p: Pt): PlayerFrame => {
+    const foot = toImage(p);
+    const est = bodyBox(p, foot);
+    const lb = lastBox[slot];
+    // Ukuran kotak terakhir hanya dipakai bila dari posisi yang mirip kedalamannya.
+    const b = lb && Math.abs(lb.h - est.h) / est.h < 0.5 ? { ...est, w: lb.w, h: lb.h, x: foot.x - lb.w / 2, y: foot.y - lb.h } : est;
+    const hand = { x: foot.x + b.w * 0.4, y: foot.y - b.h * 0.55 };
+    return { court: p, foot, box: b, wristL: hand, wristR: hand, shoulderY: foot.y - b.h * 0.8, noseY: foot.y - b.h * 0.92, manual: true };
+  };
 
   frames.forEach((f, fi) => {
     const all = f.poses
@@ -287,10 +314,10 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         const since = fi - lastSeen[slot];
         const ar = anchorRef(bySlot[slot], fi);
         let ref: Pt | null = last[slot] && since < 45 ? last[slot] : null;
-        let gate = ref ? 1.0 + 7 * dt * since : Infinity;
+        let gate = ref ? 1.0 + tol(ref) + 7 * dt * since : Infinity;
         let aGate = Infinity;
         if (ar) {
-          aGate = 0.9 + 3.5 * dt * ar.d;
+          aGate = 0.9 + tol(ar.p) + 3.5 * dt * ar.d;
           if (!ref || ar.d <= since) {
             ref = ar.p;
             gate = aGate;
@@ -337,14 +364,16 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         const ar = info[si].ar;
         const c = best[si] >= 0 ? mine[best[si]] : null;
         // Frame titik kunci: pakai deteksi bila tepat di kunci, selain itu posisi kunci itu sendiri.
-        if (ar && ar.d === 0 && (!c || dist(c.c, ar.p) > 0.8)) {
-          const foot = toImage(ar.p);
-          const b = lastBox[slot] ?? { x: 0, y: 0, w: 0.05, h: 0.14 };
-          const box = { x: foot.x - b.w / 2, y: foot.y - b.h, w: b.w, h: b.h };
-          const hand = { x: foot.x + b.w * 0.4, y: foot.y - b.h * 0.55 };
-          tracks[slot].frames.push({ court: ar.p, foot, box, wristL: hand, wristR: hand, shoulderY: foot.y - b.h * 0.8, noseY: foot.y - b.h * 0.92, manual: true });
+        if (ar && ar.d === 0 && (!c || dist(c.c, ar.p) > 0.8 + tol(ar.p))) {
+          tracks[slot].frames.push(manualFrame(slot, ar.p));
           last[slot] = ar.p;
           lastSeen[slot] = fi;
+          return;
+        }
+        // Tidak terdeteksi tapi diapit dua titik kunci (atau dekat satu kunci): tetap terkunci,
+        // posisi mengikuti interpolasi kunci — penting untuk pemain sisi jauh yang sering hilang.
+        if (!c && ar && (ar.between || ar.d <= 8)) {
+          tracks[slot].frames.push(manualFrame(slot, ar.p));
           return;
         }
         if (!c) {

@@ -470,60 +470,104 @@ function arrowMarker(ctx: CanvasRenderingContext2D, footX: number, footY: number
 /** Jejak kok/bola sesuai gaya: ekor meruncing, komet bercahaya, atau titik-titik. */
 function drawBall(ctx: CanvasRenderingContext2D, r: Result, f0: number, frac: number, P: (p: Pt) => Pt, u: number, fx: BallFx) {
   if (fx === 'off') return;
+  // Lintasan mundur dari frame sekarang sampai pukulan terakhir (ekor dimulai dari pemukul).
+  // Celah deteksi ≤ 4 frame disambung supaya ekor tidak putus-putus.
+  const span = fx === 'comet' ? 15 : fx === 'tail' ? 10 : 8;
+  let lastHit = -Infinity;
+  for (const h of r.hits) if (h.frame <= f0 && h.frame > lastHit) lastHit = h.frame;
   const pts: Pt[] = [];
-  const span = fx === 'comet' ? 10 : 7;
-  for (let k = span; k >= 0; k--) {
-    const s = r.shuttle[f0 - k];
-    if (s) pts.push(s);
-    else if (pts.length) pts.length = 0; // hanya bagian lintasan yang tersambung
+  let gap = 0;
+  for (let k = 0; k <= span; k++) {
+    const fi = f0 - k;
+    if (fi < 0 || fi < lastHit) break;
+    const s = r.shuttle[fi];
+    if (s) {
+      pts.unshift(s);
+      gap = 0;
+    } else if (++gap > 4) break;
   }
-  const nextS = r.shuttle[f0 + 1];
   const cur = r.shuttle[f0];
+  const nextS = r.shuttle[f0 + 1];
   if (cur && nextS) pts.push({ x: cur.x + (nextS.x - cur.x) * frac, y: cur.y + (nextS.y - cur.y) * frac });
   if (!pts.length) return;
-  const ball = '#ffffff';
   const acc = TH.accent;
+  const sp = pts.map(P);
+  const head = sp[sp.length - 1];
   ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
   if (fx === 'dots') {
-    pts.forEach((p, i) => {
-      const q = (i + 1) / pts.length;
-      const P2 = P(p);
-      ctx.fillStyle = i === pts.length - 1 ? ball : rgba(acc.startsWith('#') ? acc : '#C6FF3D', 0.15 + 0.6 * q);
+    sp.forEach((p, i) => {
+      const q = (i + 1) / sp.length;
+      ctx.fillStyle = i === sp.length - 1 ? '#ffffff' : rgba(acc, 0.15 + 0.6 * q);
       ctx.beginPath();
-      ctx.arc(P2.x, P2.y, u * (0.18 + 0.2 * q), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, u * (0.18 + 0.2 * q), 0, Math.PI * 2);
       ctx.fill();
     });
-  } else {
-    for (let k = 1; k < pts.length; k++) {
-      const q = k / (pts.length - 1);
-      const A = P(pts[k - 1]);
-      const B = P(pts[k]);
-      ctx.strokeStyle = rgba(acc.startsWith('#') ? acc : '#C6FF3D', (fx === 'comet' ? 0.08 : 0.12) + (fx === 'comet' ? 0.75 : 0.6) * q);
-      ctx.lineWidth = u * (fx === 'comet' ? 0.15 + 0.75 * q : 0.12 + 0.38 * q);
-      if (fx === 'comet') {
-        ctx.shadowColor = acc;
-        ctx.shadowBlur = u * 1.2 * q;
-      }
+  } else if (fx === 'tail') {
+    for (let k = 1; k < sp.length; k++) {
+      const q = k / (sp.length - 1);
+      ctx.strokeStyle = rgba(acc, 0.15 + 0.65 * q);
+      ctx.lineWidth = u * (0.12 + 0.38 * q);
       ctx.beginPath();
-      ctx.moveTo(A.x, A.y);
-      ctx.lineTo(B.x, B.y);
+      ctx.moveTo(sp[k - 1].x, sp[k - 1].y);
+      ctx.lineTo(sp[k].x, sp[k].y);
       ctx.stroke();
     }
-  }
-  const head = P(pts[pts.length - 1]);
-  if (fx === 'comet') {
-    const g = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, u * 1.4);
-    g.addColorStop(0, 'rgba(255,255,255,0.95)');
-    g.addColorStop(0.35, rgba(acc.startsWith('#') ? acc : '#C6FF3D', 0.55));
-    g.addColorStop(1, rgba(acc.startsWith('#') ? acc : '#C6FF3D', 0));
+  } else if (sp.length >= 2) {
+    // Komet: pita meruncing bercahaya dari ekor (tipis, pudar) ke kepala (tebal, terang).
+    const ribbon = (maxW: number) => {
+      const L: Pt[] = [];
+      const R: Pt[] = [];
+      sp.forEach((p, i) => {
+        const a = sp[Math.max(0, i - 1)];
+        const b = sp[Math.min(sp.length - 1, i + 1)];
+        let nx = -(b.y - a.y);
+        let ny = b.x - a.x;
+        const m = Math.hypot(nx, ny) || 1;
+        nx /= m;
+        ny /= m;
+        const w = maxW * Math.pow(i / (sp.length - 1), 0.85) * 0.5;
+        L.push({ x: p.x + nx * w, y: p.y + ny * w });
+        R.push({ x: p.x - nx * w, y: p.y - ny * w });
+      });
+      ctx.beginPath();
+      ctx.moveTo(L[0].x, L[0].y);
+      for (const p of L) ctx.lineTo(p.x, p.y);
+      for (let i = R.length - 1; i >= 0; i--) ctx.lineTo(R[i].x, R[i].y);
+      ctx.closePath();
+    };
+    const tail = sp[0];
+    const grad = (a0: number, a1: number, col: string) => {
+      const g = ctx.createLinearGradient(tail.x, tail.y, head.x, head.y);
+      g.addColorStop(0, rgba(col, a0));
+      g.addColorStop(1, rgba(col, a1));
+      return g;
+    };
+    // cahaya luar
+    ctx.shadowColor = acc;
+    ctx.shadowBlur = u * 1.4;
+    ctx.fillStyle = grad(0, 0.55, acc);
+    ribbon(u * 1.6);
+    ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(head.x, head.y, u * 1.4, 0, Math.PI * 2);
+    // inti terang
+    ctx.fillStyle = grad(0, 0.95, '#ffffff');
+    ribbon(u * 0.55);
     ctx.fill();
   }
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = ball;
+  if (fx === 'comet') {
+    const g = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, u * 1.5);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.35, rgba(acc, 0.6));
+    g.addColorStop(1, rgba(acc, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, u * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#ffffff';
   ctx.strokeStyle = acc;
   ctx.lineWidth = u / 5;
   ctx.beginPath();
