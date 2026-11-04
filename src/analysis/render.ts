@@ -1,5 +1,5 @@
 /** Gambar overlay analisis (nama pemain, jejak kok, label pukulan, peta mini) dan ekspor video. */
-import { calibMaps, detectBounces, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
+import { calibMaps, detectBounces, shotSpeeds, type ShotSpeed, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
 
 export const PLAYER_COLORS = ['#C6FF3D', '#2BC58A', '#38BDF8', '#FB923C'];
 const INK = '#0E1714';
@@ -26,6 +26,8 @@ export interface ExportStyle {
   hitFx: HitFx;
   /** Bahasa teks di video. */
   lang: VideoLang;
+  /** Tampilkan perkiraan kecepatan kok/bola. */
+  speed: boolean;
   /** Label jenis pukulan: di panel atas (di bawah Pukulan | Reli) atau di dalam video di atas pemain. */
   shotPos: 'panel' | 'video';
 }
@@ -41,7 +43,7 @@ export type BallFx = 'tail' | 'comet' | 'dots' | 'off';
 export type HitFx = 'flash' | 'burst' | 'off';
 export type VideoLang = 'id' | 'en';
 
-export const DEFAULT_STYLE: ExportStyle = { theme: 'dark', player: 'modern', ball: 'tail', bounce: true, hitFx: 'flash', shotPos: 'video', lang: 'id' };
+export const DEFAULT_STYLE: ExportStyle = { theme: 'dark', player: 'modern', ball: 'tail', bounce: true, hitFx: 'flash', shotPos: 'video', lang: 'id', speed: true };
 
 interface Theme {
   base: string;
@@ -120,6 +122,8 @@ const LANG: Record<VideoLang, Record<string, string>> = {
     kcal: 'kkal',
     pkl: 'pkl',
     footer: 'Versi Beta - angka perkiraan AI dari video http://match.wins-court.com',
+    KMH: 'KM/J',
+    kmh: 'km/j',
   },
   en: {
     HITS: 'HITS',
@@ -132,6 +136,8 @@ const LANG: Record<VideoLang, Record<string, string>> = {
     kcal: 'kcal',
     pkl: 'hits',
     footer: 'Beta version - AI estimates from video http://match.wins-court.com',
+    KMH: 'KM/H',
+    kmh: 'km/h',
   },
 };
 let LG: VideoLang = 'id';
@@ -150,6 +156,33 @@ const SHOT_EN: Record<string, string> = {
   dasar: 'Groundstroke',
 };
 const shotName = (sport: Sport, type: Hit['type']) => (LG === 'en' ? SHOT_EN[type] ?? type : shotLabel(sport, type));
+
+const speedCache = new WeakMap<Hit[], Map<string, ShotSpeed>>();
+/** Perkiraan kecepatan tiap pukulan (cache per daftar pukulan). */
+export function speedsOf(r: Result): Map<string, ShotSpeed> {
+  let m = speedCache.get(r.hits);
+  if (!m) {
+    m = shotSpeeds(r.frames, r.tracks, r.hits, r.shuttle, r.cal, r.teamSize);
+    speedCache.set(r.hits, m);
+  }
+  return m;
+}
+const speedOn = (r: Result) => (r.style?.speed ?? true) && !!r.style;
+/** " · 86 km/j" untuk label pukulan, atau '' bila mati/tidak terukur. */
+function speedSuffix(r: Result, h: Hit) {
+  if (!speedOn(r)) return '';
+  const sp = speedsOf(r).get(h.id);
+  return sp ? ` · ${Math.round(sp.kmh)} ${tx('kmh')}` : '';
+}
+/** Kecepatan pukulan terakhir yang terukur sampai waktu `now`. */
+function lastSpeed(r: Result, now: number): number | null {
+  const m = speedsOf(r);
+  for (let i = r.hits.length - 1; i >= 0; i--) {
+    const h = r.hits[i];
+    if (h.t <= now + 0.001 && m.has(h.id)) return m.get(h.id)!.kmh;
+  }
+  return null;
+}
 
 /** Pasang tema & bahasa dari gaya video untuk satu kali gambar. */
 function applyStyle(s?: ExportStyle) {
@@ -322,7 +355,7 @@ export function drawShotBanner(ctx: CanvasRenderingContext2D, r: Result, now: nu
   const age = now - last.t;
   const glow = Math.max(0, 1 - age / 0.8);
   const label = shotName(r.sport, last.type).toUpperCase();
-  const name = r.names[last.player] ?? `Pemain ${last.player + 1}`;
+  const name = (r.names[last.player] ?? `Pemain ${last.player + 1}`) + speedSuffix(r, last);
   const color = PLAYER_COLORS[last.player % 4];
   ctx.save();
   ctx.font = `800 ${size}px "Plus Jakarta Sans", Inter, system-ui, sans-serif`;
@@ -737,7 +770,7 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
     const a = hit === sel ? 1 : age < 0.7 ? 1 : Math.max(0, 1 - (age - 0.7) / 0.2);
     const rise = hit === sel ? 0 : Math.min(1, age / 0.18); // muncul naik sedikit, halus
     ctx.globalAlpha = a;
-    pill(ctx, p.x, p.y - u * (2.9 + 0.5 * rise), shotName(r.sport, hit.type).toUpperCase(), TH.accent, TH.onAccent, u * 1.15);
+    pill(ctx, p.x, p.y - u * (2.9 + 0.5 * rise), shotName(r.sport, hit.type).toUpperCase() + speedSuffix(r, hit).toUpperCase(), TH.accent, TH.onAccent, u * 1.15);
     ctx.globalAlpha = 1;
   }
   ctx.restore();
@@ -848,6 +881,35 @@ function stat(ctx: CanvasRenderingContext2D, cx: number, base: number, value: st
   ctx.font = F(700, Math.round(size * 0.3));
   ctx.fillStyle = TH.mute;
   ctx.fillText(label, cx, base + Math.round(size * 0.52));
+}
+
+/**
+ * Baris statistik PUKULAN | RELI (| KM/J bila kecepatan aktif), kolom rata di [x, x+w].
+ * `edge` = garis pemisah juga di tepi kanan (sebelum peta mini).
+ */
+function statRow(ctx: CanvasRenderingContext2D, r: Result, now: number, totalHits: number, rallies: number, x: number, y: number, w: number, h: number, base: number, size: number, edge: boolean, lines = true) {
+  const items: [string, string, string][] = [
+    [String(totalHits), tx('HITS'), TH.accent],
+    [String(rallies), tx('RALLIES'), TH.text],
+  ];
+  if (speedOn(r)) {
+    const v = lastSpeed(r, now);
+    items.push([v === null ? '–' : String(Math.round(v)), tx('KMH'), TH.text]);
+  }
+  const cw = w / items.length;
+  if (lines) {
+    ctx.strokeStyle = TH.stroke;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 1; i <= items.length; i++) {
+      if (i === items.length && !edge) break;
+      ctx.moveTo(x + cw * i, y + h * 0.2);
+      ctx.lineTo(x + cw * i, y + h * 0.8);
+    }
+    ctx.stroke();
+  }
+  const sz = items.length === 3 ? Math.round(size * 0.88) : size;
+  items.forEach(([v, l, c], i) => stat(ctx, x + cw * (i + 0.5), base, v, l, c, sz));
 }
 
 /** 5 besar peringkat; pemain match ini disorot dan tetap tampil walau di luar 5 besar. */
@@ -1048,18 +1110,9 @@ function drawVerticalPortrait(
   const SW = W - M * 2;
   const mapW = 176;
   panel(ctx, M, sy, SW, sh, 18, 0.72);
-  const statW = (SW - mapW) / 2;
-  ctx.strokeStyle = TH.stroke;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(M + statW, sy + 16);
-  ctx.lineTo(M + statW, sy + sh - 16);
-  ctx.moveTo(M + statW * 2, sy + 16);
-  ctx.lineTo(M + statW * 2, sy + sh - 16);
-  ctx.stroke();
-  stat(ctx, M + statW / 2, sy + 44, String(totalHits), tx('HITS'), TH.accent, 36);
-  stat(ctx, M + statW * 1.5, sy + 44, String(st.rallies), tx('RALLIES'), TH.text, 36);
-  drawMiniCourt(ctx, r, fi, M + statW * 2 + 4, sy + 3, mapW - 8, sh - 6, true);
+  const statsW = SW - mapW;
+  statRow(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, totalHits, st.rallies, M, sy, statsW, sh, sy + 44, 36, true);
+  drawMiniCourt(ctx, r, fi, M + statsW + 4, sy + 3, mapW - 8, sh - 6, true);
   const band = r.style?.shotPos === 'panel' ? 50 : 0;
   if (band) drawShotBanner(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, W / 2, sy + sh + G + 20, 22);
 
@@ -1213,18 +1266,9 @@ function drawExportFrameInner(ctx: CanvasRenderingContext2D, video: HTMLVideoEle
     const SW = W - M * 2;
     const mapW = 196;
     panel(ctx, M, stripY, SW, stripH, 20);
-    const statW = (SW - mapW) / 2;
-    ctx.strokeStyle = TH.stroke;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(M + statW, stripY + 18);
-    ctx.lineTo(M + statW, stripY + stripH - 18);
-    ctx.moveTo(M + statW * 2, stripY + 18);
-    ctx.lineTo(M + statW * 2, stripY + stripH - 18);
-    ctx.stroke();
-    stat(ctx, M + statW / 2, stripY + 52, String(totalHits), tx('HITS'), TH.accent, 42);
-    stat(ctx, M + statW * 1.5, stripY + 52, String(st.rallies), tx('RALLIES'), TH.text, 42);
-    drawMiniCourt(ctx, r, fi, M + statW * 2 + 6, stripY + 4, mapW - 12, stripH - 8, true);
+    const statsW = SW - mapW;
+    statRow(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, totalHits, st.rallies, M, stripY, statsW, stripH, stripY + 52, 42, true);
+    drawMiniCourt(ctx, r, fi, M + statsW + 6, stripY + 4, mapW - 12, stripH - 8, true);
     if (shotBand) drawShotBanner(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, W / 2, stripY + stripH + G + shotBand / 2 - 4, 24);
 
     // Peringkat (opsional) di atas kartu pemain.
@@ -1291,8 +1335,7 @@ function drawExportFrameInner(ctx: CanvasRenderingContext2D, video: HTMLVideoEle
     const ky = 104;
     const kh = 86 + st.players.length * rowH + 10;
     panel(ctx, M, ky, LW, kh, 18);
-    stat(ctx, M + LW / 4, ky + 50, String(totalHits), tx('HITS'), TH.accent, 38);
-    stat(ctx, M + (LW * 3) / 4, ky + 50, String(st.rallies), tx('RALLIES'), TH.text, 38);
+    statRow(ctx, r, exportTime ?? r.frames[fi]?.t ?? 0, totalHits, st.rallies, M, ky, LW, 84, ky + 50, 38, false, false);
     ctx.strokeStyle = TH.stroke;
     ctx.lineWidth = 1.5;
     ctx.beginPath();

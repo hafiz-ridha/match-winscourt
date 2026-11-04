@@ -883,3 +883,68 @@ export function detectBounces(frames: { t: number }[], shuttle: (Pt | null)[], h
   });
   return out;
 }
+
+/* ---------------- perkiraan kecepatan kok/bola ---------------- */
+
+export interface ShotSpeed {
+  kmh: number;
+  meters: number;
+  seconds: number;
+}
+
+/** Batas wajar kecepatan rata-rata mendatar (km/j) — di atas ini dianggap salah ukur. */
+const MAX_KMH: Record<Sport, number> = { badminton: 260, padel: 160 };
+
+/**
+ * Kecepatan rata-rata MENDATAR tiap pukulan (perkiraan): jarak di lapangan dari posisi pemukul ke
+ * titik tujuan dibagi waktu terbang. Tujuan = pantulan pertama (padel) / posisi penerima saat pukulan
+ * berikutnya / titik jatuh di akhir reli. Tinggi bola tidak terukur dari satu kamera, jadi ini bukan
+ * kecepatan puncak saat raket mengenai bola.
+ */
+export function shotSpeeds(
+  frames: { t: number }[],
+  tracks: Track[],
+  hits: Hit[],
+  shuttle: (Pt | null)[],
+  cal: Calib,
+  teamSize: 1 | 2,
+): Map<string, ShotSpeed> {
+  const out = new Map<string, ShotSpeed>();
+  if (!frames.length) return out;
+  const { toCourt } = calibMaps(cal);
+  const dt = frameDt(frames);
+  const gap = Math.round(RALLY_GAP[cal.sport] / dt);
+  const sm = tracks.map((t) => smoothCourt(t));
+  const posAt = (slot: number, fi: number): Pt | null => {
+    for (let k = 0; k <= 4; k++) {
+      const p = sm[slot]?.[fi - k] ?? sm[slot]?.[fi + k];
+      if (p) return p;
+    }
+    return null;
+  };
+  const bounces = detectBounces(frames, shuttle, hits, cal.sport);
+  const sorted = [...hits].sort((a, b) => a.frame - b.frame);
+  sorted.forEach((h, i) => {
+    const from = posAt(h.player, h.frame);
+    if (!from) return;
+    const next = sorted[i + 1] && sorted[i + 1].frame - h.frame <= gap ? sorted[i + 1] : null;
+    const firstBounce = bounces.find((b) => b.frame > h.frame && (!next || b.frame < next.frame));
+    let to: Pt | null = null;
+    let tEnd = 0;
+    if (firstBounce) {
+      to = toCourt(firstBounce.p); // titik pantul/jatuh berada di lantai → proyeksi ke lapangan valid
+      tEnd = firstBounce.t;
+    } else if (next && (next.player < teamSize) !== (h.player < teamSize)) {
+      to = posAt(next.player, next.frame);
+      tEnd = next.t;
+    }
+    if (!to || !Number.isFinite(to.x)) return;
+    const seconds = tEnd - h.t;
+    const meters = Math.hypot(to.x - from.x, to.y - from.y);
+    if (seconds < 0.12 || meters < 1) return;
+    const kmh = (meters / seconds) * 3.6;
+    if (kmh > MAX_KMH[cal.sport]) return;
+    out.set(h.id, { kmh, meters, seconds });
+  });
+  return out;
+}

@@ -24,7 +24,7 @@ import {
   type Quad,
   type Sport,
 } from '../analysis/core.ts';
-import { DEFAULT_STYLE, drawExportFrame, drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type ExportStyle, type Ranking, type Result } from '../analysis/render.ts';
+import { DEFAULT_STYLE, drawExportFrame, speedsOf, drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type ExportStyle, type Ranking, type Result } from '../analysis/render.ts';
 import { exportMp4, mp4Codec, type Mp4Info } from '../analysis/mp4.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
 import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
@@ -1239,6 +1239,19 @@ function ResultStep({
   end: number; onBack: () => void; from?: Setup['from'] }) {
   const toast = useToast();
   const st = useMemo(() => summarize(r.frames, r.tracks, r.hits, r.sport, r.teamSize, r.weights), [r]);
+  // Perkiraan kecepatan kok/bola: tercepat keseluruhan & per pemain.
+  const fastest = useMemo(() => {
+    const sp = speedsOf(r);
+    let best: { kmh: number; hit: (typeof r.hits)[number] } | null = null;
+    const perPlayer = r.names.map(() => 0);
+    for (const h of r.hits) {
+      const v = sp.get(h.id)?.kmh;
+      if (v === undefined) continue;
+      perPlayer[h.player] = Math.max(perPlayer[h.player], v);
+      if (!best || v > best.kmh) best = { kmh: v, hit: h };
+    }
+    return { best, perPlayer };
+  }, [r]);
   const [layout, setLayout] = useState<'portrait' | 'landscape'>('portrait');
   const [showKcal, setShowKcal] = useState(true);
   // Gaya video pilihan pengguna (diingat di perangkat ini).
@@ -1363,6 +1376,12 @@ function ResultStep({
             <span>reli terpanjang</span>
           </div>
         </div>
+        {fastest.best && (
+          <div className="small" style={{ opacity: 0.85 }}>
+            Pukulan tercepat <b style={{ color: 'var(--lime)' }}>{Math.round(fastest.best.kmh)} km/j</b> · {r.names[fastest.best.hit.player]} (
+            {shotLabel(r.sport, fastest.best.hit.type)}) · <span style={{ opacity: 0.7 }}>perkiraan rata-rata mendatar</span>
+          </div>
+        )}
       </div>
 
       {st.players.some((p) => p.coverage < 40) && (
@@ -1439,7 +1458,7 @@ function ResultStep({
               </div>
             )}
             <div className="tiny whisper">
-              Kecepatan maks {fmt1(p.maxSpeed)} m/s · terlacak {Math.round(p.coverage)}% waktu
+              Lari maks {fmt1(p.maxSpeed)} m/s{fastest.perPlayer[i] ? ` · pukulan tercepat ±${Math.round(fastest.perPlayer[i])} km/j` : ''} · terlacak {Math.round(p.coverage)}% waktu
             </div>
           </div>
         ))}
@@ -1735,6 +1754,12 @@ function VideoStyleEditor({ vs, setV, sport }: { vs: ExportStyle; setV: (p: Part
           ]}
         />
       </div>
+      <Switch
+        on={vs.speed}
+        onChange={(v) => setV({ speed: v })}
+        label={`Tampilkan kecepatan ${ball}`}
+        hint="Perkiraan rata-rata mendatar (km/j) dari jarak & waktu terbang — bukan kecepatan puncak"
+      />
       <Switch on={vs.bounce} onChange={(v) => setV({ bounce: v })} label={`Efek ${ball} memantul`} hint={`Riak di lantai saat ${ball} jatuh${sport === 'padel' ? ' atau memantul di lantai/kaca' : ''}`} />
       <div className="stack" style={{ gap: 6 }}>
         <span className="label">Efek raket kena {ball}</span>

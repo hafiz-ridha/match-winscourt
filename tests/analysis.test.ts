@@ -278,3 +278,18 @@ test('pantulan: padel memantul di lantai di antara pukulan; akhir reli tercatat'
   const bb = detectBounces(bf.frames, bs, bh, 'badminton');
   assert.ok(bb.length <= 1, `badminton hanya titik jatuh akhir reli (${bb.length})`);
 });
+
+test('kecepatan bola: jarak mendatar ke pantulan / waktu terbang, dalam batas wajar', async () => {
+  const { shotSpeeds } = await import('../src/analysis/core.ts');
+  const { frames, per } = rally(6, 'padel');
+  const tracks = trackPlayers(frames, padelCal, 1);
+  const shuttle = trackShuttle(frames, tracks, padelCal.aspect);
+  const hits = detectHits(frames, tracks, shuttle, 'padel', 1);
+  const sp = shotSpeeds(frames, tracks, hits, shuttle, padelCal, 1);
+  assert.ok(sp.size >= hits.length - 2, `kecepatan terukur ${sp.size}/${hits.length}`);
+  for (const s of sp.values()) {
+    // Bola menempuh ±70% jarak antar pemain (±11 m) dalam ±0,7 dtk → ±40–80 km/j.
+    assert.ok(s.kmh > 25 && s.kmh < 110, `km/j ${s.kmh.toFixed(1)}`);
+    assert.ok(Math.abs(s.seconds - (0.7 * per) / 15) < 0.25, `waktu ${s.seconds.toFixed(2)}`);
+  }
+});
