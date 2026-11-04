@@ -1505,11 +1505,12 @@ function ResultStep({
   const [layout, setLayout] = useState<'portrait' | 'landscape'>('portrait');
   const [showKcal, setShowKcal] = useState(true);
   // Gaya video pilihan pengguna (diingat di perangkat ini).
-  const [vs, setVs] = useState<ExportStyle>(loadStyle);
+  const hq = !!r.hq;
+  const [vs, setVs] = useState<ExportStyle>(() => loadStyle(hq));
   const setV = (p: Partial<ExportStyle>) =>
     setVs((cur) => {
       const n = { ...cur, ...p };
-      saveStyle(n);
+      saveStyle(n, hq);
       return n;
     });
   const styled = useMemo<Result>(() => ({ ...r, style: vs }), [r, vs]);
@@ -1740,9 +1741,9 @@ function ResultStep({
           ]}
         />
         <StylePreview src={src} r={styled} layout={layout} showKcal={showKcal} />
-        <VideoStyleEditor vs={vs} setV={setV} sport={r.sport} />
+        <VideoStyleEditor vs={vs} setV={setV} sport={r.sport} hq={hq} />
         <Switch on={showKcal} onChange={setShowKcal} label="Tampilkan kalori" hint="Perkiraan dari jarak lari & berat badan" />
-        <button type="button" className="btn btn-ghost btn-xs" style={{ alignSelf: 'flex-start' }} onClick={() => setV(DEFAULT_STYLE)}>
+        <button type="button" className="btn btn-ghost btn-xs" style={{ alignSelf: 'flex-start' }} onClick={() => setV(hq ? DEFAULT_STYLE : { ...DEFAULT_STYLE, ball: 'off' })}>
           Kembalikan gaya bawaan
         </button>
         {!supported && <div className="banner banner-warn small">Browser ini belum mendukung perekaman video. Coba Chrome atau Safari versi terbaru.</div>}
@@ -1925,16 +1926,28 @@ function RankingPicker({ r, patch, from }: { r: Result; patch: (x: Partial<Resul
 /* ---------------- gaya video (kustomisasi pengguna) ---------------- */
 
 const STYLE_KEY = 'mwc.vstyle';
-function loadStyle(): ExportStyle {
+/**
+ * Animasi kok/bola diingat terpisah per mode akurasi. Di akurasi normal posisi kok sering meleset,
+ * jadi bawaannya MATI; pengguna tetap bisa menyalakannya.
+ */
+type SavedStyle = Partial<ExportStyle> & { ballNormal?: ExportStyle['ball'] };
+function readSaved(): SavedStyle {
   try {
-    return { ...DEFAULT_STYLE, ...(JSON.parse(localStorage.getItem(STYLE_KEY) ?? '{}') as Partial<ExportStyle>) };
+    return JSON.parse(localStorage.getItem(STYLE_KEY) ?? '{}') as SavedStyle;
   } catch {
-    return DEFAULT_STYLE;
+    return {};
   }
 }
-function saveStyle(s: ExportStyle) {
+function loadStyle(hq: boolean): ExportStyle {
+  const { ballNormal, ...saved } = readSaved();
+  const s = { ...DEFAULT_STYLE, ...saved };
+  return hq ? s : { ...s, ball: ballNormal ?? 'off' };
+}
+function saveStyle(s: ExportStyle, hq: boolean) {
+  const prev = readSaved();
+  const next: SavedStyle = hq ? { ...s, ballNormal: prev.ballNormal } : { ...s, ball: prev.ball ?? DEFAULT_STYLE.ball, ballNormal: s.ball };
   try {
-    localStorage.setItem(STYLE_KEY, JSON.stringify(s));
+    localStorage.setItem(STYLE_KEY, JSON.stringify(next));
   } catch {
     /* mode privat */
   }
@@ -1959,7 +1972,7 @@ const THEME_OPTS: { v: ExportStyle['theme']; label: string; bg: string; accent: 
   { v: 'neon', label: 'Neon', bg: '#060814', accent: '#00E5FF', text: '#fff' },
 ];
 
-function VideoStyleEditor({ vs, setV, sport }: { vs: ExportStyle; setV: (p: Partial<ExportStyle>) => void; sport: Sport }) {
+function VideoStyleEditor({ vs, setV, sport, hq }: { vs: ExportStyle; setV: (p: Partial<ExportStyle>) => void; sport: Sport; hq: boolean }) {
   const ball = sport === 'padel' ? 'bola' : 'kok';
   return (
     <div className="stack an-style">
@@ -2003,6 +2016,11 @@ function VideoStyleEditor({ vs, setV, sport }: { vs: ExportStyle; setV: (p: Part
             { v: 'off', label: 'Mati' },
           ]}
         />
+        {!hq && (
+          <span className="tiny mute">
+            Bawaan mati di akurasi normal karena posisi {ball} sering meleset. Untuk animasi {ball} yang tepat, proses dengan mode akurasi tinggi.
+          </span>
+        )}
       </div>
       <Switch
         on={vs.speed}
