@@ -65,9 +65,42 @@ export function apply(h: H, p: Pt): Pt {
   return { x: (h[0] * p.x + h[1] * p.y + h[2]) / w, y: (h[3] * p.x + h[4] * p.y + h[5]) / w };
 }
 
+/**
+ * Titik acuan kalibrasi (4 titik yang ditandai pengguna), supaya rekaman yang tidak menampilkan
+ * lapangan penuh tetap bisa dikalibrasi:
+ *  - corners:  4 sudut luar lapangan
+ *  - nearHalf: 2 ujung net + 2 sudut baseline dekat (sisi jauh terpotong)
+ *  - service:  4 titik garis servis pendek × garis samping (kedua baseline terpotong)
+ */
+export type CalibRef = 'corners' | 'nearHalf' | 'service';
+
+/** Koordinat lapangan (meter) untuk 4 titik acuan, urutan: kiri jauh, kanan jauh, kanan dekat, kiri dekat. */
+export function refPoints(spec: CourtSpec, ref: CalibRef = 'corners'): Quad {
+  const { W, L } = spec;
+  const net = L / 2;
+  const s = spec.serviceFromNet;
+  if (ref === 'nearHalf')
+    return [
+      { x: 0, y: net },
+      { x: W, y: net },
+      { x: W, y: L },
+      { x: 0, y: L },
+    ];
+  if (ref === 'service')
+    return [
+      { x: 0, y: net - s },
+      { x: W, y: net - s },
+      { x: W, y: net + s },
+      { x: 0, y: net + s },
+    ];
+  return courtCorners(spec);
+}
+
 export interface Calib {
   sport: Sport;
   quad: Quad;
+  /** Titik acuan yang dipakai untuk 4 titik `quad` (bawaan: 4 sudut). */
+  ref?: CalibRef;
   /** Rasio lebar/tinggi frame video (untuk jarak di gambar). */
   aspect: number;
 }
@@ -84,8 +117,9 @@ export function courtCorners(c: CourtSpec): Quad {
 /** Gambar→lapangan dan lapangan→gambar. */
 export function calibMaps(cal: Calib) {
   const spec = COURTS[cal.sport];
-  const toCourt = homography(cal.quad, courtCorners(spec));
-  const toImage = homography(courtCorners(spec), cal.quad);
+  const ref = refPoints(spec, cal.ref);
+  const toCourt = homography(cal.quad, ref);
+  const toImage = homography(ref, cal.quad);
   return { spec, toCourt: (p: Pt) => apply(toCourt, p), toImage: (p: Pt) => apply(toImage, p) };
 }
 

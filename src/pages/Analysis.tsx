@@ -19,6 +19,8 @@ import {
   trackShuttle,
   COURTS,
   type Anchor,
+  type Calib,
+  type CalibRef,
   type FrameObs,
   type Pt,
   type Quad,
@@ -41,7 +43,38 @@ const DEFAULT_QUAD: Quad = [
   { x: 0.88, y: 0.88 },
   { x: 0.12, y: 0.88 },
 ];
-const CORNER_HINT = ['Kiri jauh', 'Kanan jauh', 'Kanan dekat', 'Kiri dekat'];
+/** Posisi awal 4 titik untuk tiap titik acuan (perkiraan sudut kamera di belakang lapangan). */
+const REF_QUAD: Record<CalibRef, Quad> = {
+  corners: DEFAULT_QUAD,
+  nearHalf: [
+    { x: 0.3, y: 0.45 },
+    { x: 0.7, y: 0.45 },
+    { x: 0.92, y: 0.92 },
+    { x: 0.08, y: 0.92 },
+  ],
+  service: [
+    { x: 0.32, y: 0.42 },
+    { x: 0.68, y: 0.42 },
+    { x: 0.82, y: 0.74 },
+    { x: 0.18, y: 0.74 },
+  ],
+};
+const REF_INFO: Record<CalibRef, { label: string; hint: [string, string, string, string]; how: string }> = {
+  corners: { label: '4 sudut', hint: ['Kiri jauh', 'Kanan jauh', 'Kanan dekat', 'Kiri dekat'], how: '1–2 sudut baseline jauh · 3–4 sudut baseline dekat' },
+  nearHalf: {
+    label: 'Setengah dekat',
+    hint: ['Net kiri', 'Net kanan', 'Kanan dekat', 'Kiri dekat'],
+    how: '1–2 ujung net di garis samping · 3–4 sudut baseline dekat. Untuk rekaman yang sisi jauhnya terpotong.',
+  },
+  service: {
+    label: 'Garis servis',
+    hint: ['Servis jauh kiri', 'Servis jauh kanan', 'Servis dekat kanan', 'Servis dekat kiri'],
+    how: 'Titik pertemuan garis servis dengan garis samping, di kedua sisi net. Untuk kamera dekat yang kedua baseline-nya terpotong.',
+  },
+};
+/** Ruang di luar video (proporsi frame per sisi) saat "Perluas area" aktif. */
+const CAL_MARGIN = 0.3;
+
 
 const mmss = (s: number, cs = false) => {
   const m = Math.floor(s / 60);
@@ -108,6 +141,7 @@ function AnalysisApp() {
   const [meta, setMeta] = useState<{ duration: number; aspect: number } | null>(null);
   const [clip, setClip] = useState({ start: 0, len: 60 });
   const [quad, setQuad] = useState<Quad>(DEFAULT_QUAD);
+  const [calRef, setCalRef] = useState<CalibRef>('corners');
   const [nearIsA, setNearIsA] = useState(true);
   // Penanda posisi pemain di frame awal (gambar ternormalisasi) per slot; null = tidak dikunci.
   const [marks, setMarks] = useState<(Pt | null)[]>([]);
@@ -210,6 +244,8 @@ function AnalysisApp() {
           at={clip.start + 0.5}
           quad={quad}
           setQuad={setQuad}
+          calRef={calRef}
+          setCalRef={setCalRef}
           nearIsA={nearIsA}
           setNearIsA={setNearIsA}
           teamA={setup.teamA.slice(0, setup.teamSize)}
@@ -225,12 +261,12 @@ function AnalysisApp() {
         <ProcessStep
           video={procVideo}
           setup={setup}
-          cal={{ sport: setup.sport, quad, aspect: meta.aspect }}
+          cal={{ sport: setup.sport, quad, aspect: meta.aspect, ref: calRef }}
           start={clip.start}
           end={end}
           names={names}
           anchors={marks.flatMap((m, slot) =>
-            m && slot < setup.teamSize * 2 ? [{ slot, frame: Math.round(0.5 * FPS), court: calibMaps({ sport: setup.sport, quad, aspect: meta.aspect }).toCourt(m) }] : [],
+            m && slot < setup.teamSize * 2 ? [{ slot, frame: Math.round(0.5 * FPS), court: calibMaps({ sport: setup.sport, quad, aspect: meta.aspect, ref: calRef }).toCourt(m) }] : [],
           )}
           onCancel={() => setStep(1)}
           onDone={(r) => {
@@ -439,6 +475,8 @@ function CalibStep({
   at,
   quad,
   setQuad,
+  calRef,
+  setCalRef,
   nearIsA,
   setNearIsA,
   teamA,
@@ -454,6 +492,8 @@ function CalibStep({
   at: number;
   quad: Quad;
   setQuad: (q: Quad) => void;
+  calRef: CalibRef;
+  setCalRef: (r: CalibRef) => void;
   nearIsA: boolean;
   setNearIsA: (v: boolean) => void;
   teamA: string[];
@@ -467,7 +507,16 @@ function CalibStep({
   const [mode, setMode] = useState<'court' | 'players'>('court');
   const [pdrag, setPdrag] = useState<number | null>(null);
   const teamSize = names.length / 2;
-  const { spec: cspec, toImage: cToImage } = calibMaps({ sport, quad, aspect: 1 });
+  const { spec: cspec, toImage: cToImage } = calibMaps({ sport, quad, aspect: 1, ref: calRef });
+  // "Perluas area": ruang kosong di sekeliling video supaya titik di luar frame bisa ditandai.
+  const outside = quad.some((p) => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1);
+  const [wideOn, setWide] = useState(outside);
+  const wide = wideOn || outside;
+  const M = wide ? CAL_MARGIN : 0;
+  const k = 1 + 2 * M;
+  /** Titik frame video (0..1, boleh di luar) → persen posisi di kotak kalibrasi. */
+  const pos = (p: Pt) => ({ left: `${((p.x + M) / k) * 100}%`, top: `${((p.y + M) / k) * 100}%` });
+  const info = REF_INFO[calRef];
   // Posisi awal penanda: tengah area main tiap pemain (kiri/kanan, dekat/jauh).
   const markAt = (slot: number): Pt => {
     const m = marks[slot];
@@ -487,13 +536,36 @@ function CalibStep({
     const v = video.current;
     const c = canvas.current;
     if (!v || !c || !v.videoWidth) return;
-    c.width = v.videoWidth > 1280 ? 1280 : v.videoWidth;
-    c.height = Math.round((c.width * v.videoHeight) / v.videoWidth);
+    // Ukuran frame video di kanvas; kanvas = frame + ruang di luar video (bila diperluas).
+    const W = v.videoWidth > 1280 ? 1280 : v.videoWidth;
+    const H = Math.round((W * v.videoHeight) / v.videoWidth);
+    c.width = Math.round(W * k);
+    c.height = Math.round(H * k);
     const ctx = c.getContext('2d')!;
-    ctx.drawImage(v, 0, 0, c.width, c.height);
-    const W = c.width;
-    const H = c.height;
-    const { spec, toImage } = calibMaps({ sport, quad, aspect: W / H });
+    ctx.fillStyle = '#0e1714';
+    ctx.fillRect(0, 0, c.width, c.height);
+    if (M) {
+      // Arsiran tipis = area di luar rekaman.
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 2;
+      for (let d = -c.height; d < c.width; d += 28) {
+        ctx.beginPath();
+        ctx.moveTo(d, 0);
+        ctx.lineTo(d + c.height, c.height);
+        ctx.stroke();
+      }
+    }
+    ctx.save();
+    ctx.translate(M * W, M * H);
+    ctx.drawImage(v, 0, 0, W, H);
+    if (M) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.setLineDash([10, 8]);
+      ctx.lineWidth = 2;
+      ctx.strokeRect(0, 0, W, H);
+      ctx.setLineDash([]);
+    }
+    const { spec, toImage } = calibMaps({ sport, quad, aspect: W / H, ref: calRef });
     ctx.lineWidth = Math.max(2, W / 400);
     ctx.strokeStyle = '#C6FF3D';
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
@@ -515,7 +587,8 @@ function CalibStep({
     ctx.moveTo(n1.x * W, n1.y * H);
     ctx.lineTo(n2.x * W, n2.y * H);
     ctx.stroke();
-  }, [quad, sport]);
+    ctx.restore();
+  }, [quad, sport, calRef, M, k]);
 
   useEffect(() => {
     const v = video.current;
@@ -537,7 +610,8 @@ function CalibStep({
   const move = (e: RPointerEvent) => {
     if ((drag === null && pdrag === null) || !box.current) return;
     const r = box.current.getBoundingClientRect();
-    const p = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+    const lim = (v: number) => Math.min(1 + M, Math.max(-M, v));
+    const p = { x: lim(((e.clientX - r.left) / r.width) * k - M), y: lim(((e.clientY - r.top) / r.height) * k - M) };
     if (pdrag !== null) {
       const m = [...marks];
       m[pdrag] = p;
@@ -565,7 +639,8 @@ function CalibStep({
           <p className="small mute">
             {mode === 'court' ? (
               <>
-                Geser 4 titik ke sudut garis luar lapangan sampai <b>garis lime menempel garis putih</b>.
+                Geser 4 titik ke titik acuan sampai <b>garis lime menempel garis putih</b>. Lapangan tidak terlihat penuh? Pilih titik acuan lain
+                atau perluas area untuk menaruh titik di luar video.
               </>
             ) : (
               <>
@@ -582,6 +657,32 @@ function CalibStep({
             { v: 'players', label: `Posisi pemain${lockedCount ? ` · ${lockedCount} 🔒` : ''}` },
           ]}
         />
+        {mode === 'court' && (
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="label">Titik acuan</span>
+            <div className="an-chips" role="radiogroup">
+              {(Object.keys(REF_INFO) as CalibRef[]).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  role="radio"
+                  aria-checked={calRef === r}
+                  className={calRef === r ? 'on' : ''}
+                  onClick={() => {
+                    if (r === calRef) return;
+                    setCalRef(r);
+                    setQuad(REF_QUAD[r]);
+                  }}
+                >
+                  {REF_INFO[r].label}
+                </button>
+              ))}
+              <button type="button" className={wide ? 'on' : ''} disabled={outside} onClick={() => setWide(!wideOn)} title="Tambah ruang di luar video untuk titik yang terpotong">
+                {wide ? '✓ ' : ''}Perluas area
+              </button>
+            </div>
+          </div>
+        )}
         <div className="an-calib" ref={box} onPointerMove={move} onPointerUp={stopDrag} onPointerCancel={stopDrag}>
           <video ref={video} src={src} muted playsInline preload="auto" className="an-hidden-video" />
           <canvas ref={canvas} />
@@ -594,7 +695,7 @@ function CalibStep({
                   key={slot}
                   type="button"
                   className={`an-pmark${marks[slot] ? ' set' : ''}${pdrag === slot ? ' on' : ''}`}
-                  style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, ['--c' as string]: PLAYER_COLORS[slot % 4] }}
+                  style={{ ...pos(p), ['--c' as string]: PLAYER_COLORS[slot % 4] }}
                   aria-label={`Posisi ${nm}`}
                   onPointerDown={(e) => {
                     e.preventDefault();
@@ -617,8 +718,9 @@ function CalibStep({
               key={i}
               type="button"
               className={`an-handle${drag === i ? ' on' : ''}`}
-              style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
-              aria-label={CORNER_HINT[i]}
+              style={pos(p)}
+              aria-label={info.hint[i]}
+              title={info.hint[i]}
               onPointerDown={(e) => {
                 e.preventDefault();
                 (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -633,8 +735,10 @@ function CalibStep({
         </div>
         {mode === 'court' ? (
           <>
-            <div className="tiny mute">1 kiri jauh · 2 kanan jauh · 3 kanan dekat · 4 kiri dekat (dilihat dari kamera)</div>
-            <button className="btn btn-ghost btn-sm" onClick={() => setQuad(DEFAULT_QUAD)}>
+            <div className="tiny mute">
+              {info.hint.map((h, i) => `${i + 1} ${h.toLowerCase()}`).join(' · ')} (dilihat dari kamera). {info.how}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setQuad(REF_QUAD[calRef])}>
               Ulangi titik
             </button>
           </>
@@ -699,7 +803,7 @@ function ProcessStep({
 }: {
   video: React.RefObject<HTMLVideoElement | null>;
   setup: Setup;
-  cal: { sport: Sport; quad: Quad; aspect: number };
+  cal: Calib;
   start: number;
   end: number;
   names: string[];
@@ -756,7 +860,7 @@ function ProcessStep({
         setStatus('Menghitung pukulan…');
         setProgress(1);
         await new Promise((r) => setTimeout(r, 30));
-        const calib = { sport: cal.sport, quad: cal.quad, aspect: cal.aspect };
+        const calib: Calib = { sport: cal.sport, quad: cal.quad, aspect: cal.aspect, ref: cal.ref };
         const tracks = trackPlayers(obs, calib, setup.teamSize, anchors);
         const shuttle = trackShuttle(obs, tracks, cal.aspect);
         const hits = detectHits(obs, tracks, shuttle, cal.sport, setup.teamSize);

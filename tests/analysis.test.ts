@@ -293,3 +293,22 @@ test('kecepatan bola: jarak mendatar ke pantulan / waktu terbang, dalam batas wa
     assert.ok(Math.abs(s.seconds - (0.7 * per) / 15) < 0.25, `waktu ${s.seconds.toFixed(2)}`);
   }
 });
+
+test('kalibrasi fleksibel: setengah lapangan & garis servis menghasilkan peta yang sama dengan 4 sudut', async () => {
+  const { refPoints } = await import('../src/analysis/core.ts');
+  for (const sport of ['badminton', 'padel'] as const) {
+    const full: Calib = { ...cal, sport };
+    const truth = calibMaps(full);
+    for (const ref of ['nearHalf', 'service'] as const) {
+      // Titik acuan dilihat di gambar (dari kalibrasi "benar"), lalu dikalibrasi ulang hanya dari titik itu.
+      const quad = refPoints(truth.spec, ref).map(truth.toImage) as Calib['quad'];
+      const alt = calibMaps({ sport, quad, aspect: cal.aspect, ref });
+      // Sudut jauh (yang mungkin tidak terlihat) tetap terpetakan tepat.
+      for (const p of [{ x: 0, y: 0 }, { x: truth.spec.W, y: 0 }, { x: truth.spec.W / 2, y: truth.spec.L * 0.3 }]) {
+        const a = truth.toImage(p);
+        const b = alt.toImage(p);
+        assert.ok(Math.hypot(a.x - b.x, a.y - b.y) < 1e-6, `${sport}/${ref} (${p.x},${p.y})`);
+      }
+    }
+  }
+});
