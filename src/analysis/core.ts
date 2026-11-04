@@ -123,6 +123,208 @@ export function calibMaps(cal: Calib) {
   return { spec, toCourt: (p: Pt) => apply(toCourt, p), toImage: (p: Pt) => apply(toImage, p) };
 }
 
+/* ---------------- gerak kamera (stabilisasi) ---------------- */
+
+/**
+ * Gerak kamera per frame: transformasi similaritas (geser + putar + zoom) dari frame ini ke frame
+ * kalibrasi, di ruang isotropik (x·aspek, y) — z' = (a + ib)·z + (tx + i·ty).
+ * Kalibrasi lapangan dibuat di satu frame; bila HP dipegang tangan, titik di frame lain dipindah
+ * dulu ke frame kalibrasi sebelum diproyeksikan ke lapangan.
+ */
+export type Cam = [number, number, number, number];
+export const CAM_ID: Cam = [1, 0, 0, 0];
+
+export function camApply(c: Cam | undefined, p: Pt, aspect: number): Pt {
+  if (!c) return p;
+  const X = p.x * aspect;
+  const Y = p.y;
+  return { x: (c[0] * X - c[1] * Y + c[2]) / aspect, y: c[1] * X + c[0] * Y + c[3] };
+}
+/** c1 ∘ c2 (c2 dulu, lalu c1). */
+export function camCompose(c1: Cam, c2: Cam): Cam {
+  const [a1, b1, x1, y1] = c1;
+  const [a2, b2, x2, y2] = c2;
+  return [a1 * a2 - b1 * b2, a1 * b2 + b1 * a2, a1 * x2 - b1 * y2 + x1, b1 * x2 + a1 * y2 + y1];
+}
+export function camInvert(c: Cam): Cam {
+  const [a, b, x, y] = c;
+  const m = a * a + b * b || 1;
+  const ia = a / m;
+  const ib = -b / m;
+  return [ia, ib, -(ia * x - ib * y), -(ib * x + ia * y)];
+}
+/** Jadikan frame `k` (frame kalibrasi) sebagai acuan semua transformasi kamera. */
+export function camRebase<T extends { cam?: Cam }>(frames: T[], k: number) {
+  const ref = frames[Math.max(0, Math.min(frames.length - 1, k))]?.cam;
+  if (!ref) return;
+  const inv = camInvert(ref);
+  for (const f of frames) if (f.cam) f.cam = camCompose(inv, f.cam);
+}
+
+/**
+ * Perkiraan gerak kamera antara dua frame abu-abu (W×H piksel): pencocokan blok di grid, median
+ * (kebal terhadap pemain yang bergerak), lalu kuadrat terkecil similaritas pada blok yang sepakat.
+ * Hasil memetakan piksel frame `cur` → posisi di frame `prev`, dalam satuan piksel. null = tidak yakin.
+ */
+export function estimateMotion(cur: ArrayLike<number>, prev: ArrayLike<number>, W: number, H: number): { cam: Cam; n: number } | null {
+  const B = 16;
+  const R = Math.max(6, Math.round(W / 26)); // jangkauan cari ±R piksel
+  const cols = 8;
+  const rows = 6;
+  if (W < 2 * R + B + cols || H < 2 * R + B + rows) return null;
+  const vec: { x: number; y: number; dx: number; dy: number }[] = [];
+  const sad = (bx: number, by: number, dx: number, dy: number) => {
+    let s = 0;
+    for (let y = 0; y < B; y++) {
+      const r0 = (by + y) * W + bx;
+      const r1 = (by + y + dy) * W + bx + dx;
+      for (let x = 0; x < B; x++) s += Math.abs(cur[r0 + x] - prev[r1 + x]);
+    }
+    return s;
+  };
+  for (let gy = 0; gy < rows; gy++) {
+    for (let gx = 0; gx < cols; gx++) {
+      const bx = Math.round(R + (gx * (W - 2 * R - B)) / (cols - 1));
+      const by = Math.round(R + (gy * (H - 2 * R - B)) / (rows - 1));
+      // Blok polos (lantai rata) tidak bisa dicocokkan → lewati.
+      let m = 0;
+      let m2 = 0;
+      for (let y = 0; y < B; y++)
+        for (let x = 0; x < B; x++) {
+          const v = cur[(by + y) * W + bx + x];
+          m += v;
+          m2 += v * v;
+        }
+      m /= B * B;
+      if (m2 / (B * B) - m * m < 40) continue;
+      let best = Infinity;
+      let bdx = 0;
+      let bdy = 0;
+      for (let dy = -R; dy <= R; dy += 2)
+        for (let dx = -R; dx <= R; dx += 2) {
+          const s = sad(bx, by, dx, dy);
+          if (s < best) (best = s), (bdx = dx), (bdy = dy);
+        }
+      const cx = bdx;
+      const cy = bdy;
+      for (let dy = cy - 1; dy <= cy + 1; dy++)
+        for (let dx = cx - 1; dx <= cx + 1; dx++) {
+          if (Math.abs(dx) > R || Math.abs(dy) > R) continue;
+          const s = sad(bx, by, dx, dy);
+          if (s < best) (best = s), (bdx = dx), (bdy = dy);
+        }
+      if (best / (B * B) > 28) continue; // tidak ada pasangan yang mirip
+      // Sub-piksel: parabola di sekitar minimum.
+      const sub = (sm: number, s0: number, sp: number) => {
+        const d = sm - 2 * s0 + sp;
+        return d > 0 ? Math.max(-0.5, Math.min(0.5, (sm - sp) / (2 * d))) : 0;
+      };
+      let fx = bdx;
+      let fy = bdy;
+      if (Math.abs(bdx) < R) fx += sub(sad(bx, by, bdx - 1, bdy), best, sad(bx, by, bdx + 1, bdy));
+      if (Math.abs(bdy) < R) fy += sub(sad(bx, by, bdx, bdy - 1), best, sad(bx, by, bdx, bdy + 1));
+      vec.push({ x: bx + B / 2, y: by + B / 2, dx: fx, dy: fy });
+    }
+  }
+  if (vec.length < 6) return null;
+  const med = (a: number[]) => {
+    const s = [...a].sort((p, q) => p - q);
+    return s[s.length >> 1];
+  };
+  const mdx = med(vec.map((v) => v.dx));
+  const mdy = med(vec.map((v) => v.dy));
+  const inl = vec.filter((v) => Math.hypot(v.dx - mdx, v.dy - mdy) < 2);
+  if (inl.length < 5) return null;
+  // Kamera diam: getaran < 0,3 piksel dianggap nol (tidak menumpuk jadi geser palsu).
+  if (Math.hypot(mdx, mdy) < 0.3 && inl.every((v) => Math.hypot(v.dx, v.dy) < 0.8)) return { cam: [...CAM_ID], n: inl.length };
+  let zx = 0;
+  let zy = 0;
+  let wx = 0;
+  let wy = 0;
+  for (const v of inl) {
+    zx += v.x;
+    zy += v.y;
+    wx += v.x + v.dx;
+    wy += v.y + v.dy;
+  }
+  zx /= inl.length;
+  zy /= inl.length;
+  wx /= inl.length;
+  wy /= inl.length;
+  let S = 0;
+  let A = 0;
+  let Bi = 0;
+  for (const v of inl) {
+    const px = v.x - zx;
+    const py = v.y - zy;
+    const qx = v.x + v.dx - wx;
+    const qy = v.y + v.dy - wy;
+    S += px * px + py * py;
+    A += qx * px + qy * py;
+    Bi += qy * px - qx * py;
+  }
+  let a = S ? A / S : 1;
+  let b = S ? Bi / S : 0;
+  // Putar/zoom yang tidak wajar untuk 1 frame → cukup geser saja.
+  if (Math.abs(a - 1) > 0.04 || Math.abs(b) > 0.04) {
+    a = 1;
+    b = 0;
+  }
+  return { cam: [a, b, wx - (a * zx - b * zy), wy - (b * zx + a * zy)], n: inl.length };
+}
+
+/* ---------------- suara pukulan ---------------- */
+
+/**
+ * Waktu bunyi pukulan (detik, relatif awal sampel): bunyi "tak" raket kena kok/bola adalah lonjakan
+ * energi frekuensi tinggi yang sangat cepat (< 15 ms). Langkah kaki, decit sepatu & suara orang naik
+ * lebih pelan, jadi tersaring. Mengembalikan [] bila audio terlalu ramai (musik, dsb.).
+ */
+export function detectOnsets(x: Float32Array, sr: number): number[] {
+  const hop = Math.max(64, Math.round(sr * 0.005));
+  const n = Math.floor((x.length - 1) / hop);
+  if (n < 20) return [];
+  // Energi selisih sampel (penguat frekuensi tinggi) per 5 ms, dalam dB.
+  const le = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    let e = 0;
+    const a = k * hop + 1;
+    for (let i = a; i < a + hop; i++) {
+      const d = x[i] - x[i - 1];
+      e += d * d;
+    }
+    le[k] = 10 * Math.log10(e / hop + 1e-12);
+  }
+  // Lantai derau: persentil 30 dalam jendela ±1,5 dtk (dihitung per 0,25 dtk).
+  const W = Math.round(1.5 / 0.005);
+  const step = 50;
+  const floorAt: number[] = [];
+  for (let k = 0; k < n; k += step) {
+    const s = Array.from(le.subarray(Math.max(0, k - W), Math.min(n, k + W))).sort((p, q) => p - q);
+    floorAt.push(s[Math.floor(s.length * 0.3)]);
+  }
+  const rise = (k: number) => le[k] - Math.min(le[k - 1], le[k - 2], le[k - 3], le[k - 4]);
+  const out: number[] = [];
+  let last = -Infinity;
+  for (let k = 4; k < n - 6; k++) {
+    const r = rise(k);
+    if (r < 9) continue;
+    if (le[k] - floorAt[Math.floor(k / step)] < 14) continue;
+    // Puncak lokal lonjakan ±30 ms.
+    let peak = true;
+    for (let j = Math.max(4, k - 6); j <= k + 6 && peak; j++) if (j !== k && rise(j) > r) peak = false;
+    if (!peak) continue;
+    // Bunyi pukulan pendek: 60 ms kemudian energi sudah turun jauh.
+    if (le[k + 6] > le[k] - 4 && le[Math.min(n - 1, k + 12)] > le[k] - 6) continue;
+    const t = (k * hop) / sr;
+    if (t - last < 0.15) continue;
+    out.push(t);
+    last = t;
+  }
+  const dur = x.length / sr;
+  return out.length / Math.max(1, dur) > 4 ? [] : out;
+}
+
 /** Garis-garis lapangan (meter) untuk digambar sebagai pratinjau kalibrasi. */
 export function courtLines(spec: CourtSpec): [Pt, Pt][] {
   const { W, L } = spec;
@@ -176,11 +378,14 @@ export function sideRegion(cal: Calib, side: 'near' | 'far') {
   let yA = ys.length ? Math.min(...ys) : 0;
   // Sisi dekat selalu sampai dasar frame: pemain dekat ada di bawah gambar, dan kakinya harus ikut terpotong masuk.
   const yB = side === 'near' || behind || !ys.length ? 1 : Math.max(...ys);
-  // Tinggi badan pemain (~1.8 m) di gambar ≈ 0.9× lebar lapangan setempat; ambil ke atas.
+  // Ruang ke atas untuk badan pemain di garis paling jauh: ±2,8 m (lompat + raket di atas kepala),
+  // diskalakan dari lebar lapangan (+1,5 m kiri-kanan) di gambar pada garis itu. Potongan yang lebih
+  // rapat = pemain tampak lebih besar bagi model pose.
   const top0 = raw[0];
   const top1 = raw[1];
   const widthAtTop = top0 && top1 ? Math.abs(top1.x - top0.x) : 1;
-  yA -= Math.max(0.12, widthAtTop * 0.75);
+  // Sisi dekat: pemain dekat kamera jauh lebih tinggi di gambar daripada di garis net → ruang lebih lega.
+  yA -= side === 'far' ? Math.max(0.06, (widthAtTop * cal.aspect * 2.8) / (spec.W + 3)) : Math.max(0.12, widthAtTop * 0.35);
   x0 = clamp(x0);
   x1 = clamp(x1);
   return { x: x0, y: clamp(yA), w: Math.max(0.05, x1 - x0), h: Math.max(0.05, clamp(yB) - clamp(yA)) };
@@ -198,18 +403,30 @@ export interface PoseObs {
   shoulderR: Pt;
   nose: Pt;
   score: number;
+  /** true = kaki tertutup (mis. net) → posisi kaki diperkirakan dari pinggul/lutut. */
+  est?: boolean;
 }
 
 export interface Blob {
   x: number;
   y: number;
   area: number;
+  /** Kecerahan blob dibanding latar sebelumnya (−255..255). Kok putih / bola kuning: positif. */
+  contrast?: number;
 }
 
 export interface FrameObs {
   t: number;
   poses: PoseObs[];
   blobs: Blob[];
+  /** Gerak kamera frame ini → frame kalibrasi (tidak ada = kamera diam). */
+  cam?: Cam;
+}
+
+/** Info per frame yang disimpan di hasil. */
+export interface FrameInfo {
+  t: number;
+  cam?: Cam;
 }
 
 export interface PlayerFrame {
@@ -290,13 +507,14 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
   };
   /** Kotak badan perkiraan dari perspektif (tinggi ±1,7 m) untuk posisi manual. */
   const bodyBox = (p: Pt, foot: Pt) => {
-    const sx = Math.abs(toImage({ x: p.x + 1, y: p.y }).x - foot.x) || 0.02;
+    const sx = Math.abs(toImage({ x: p.x + 1, y: p.y }).x - toImage(p).x) || 0.02;
     const h = Math.min(0.5, 1.7 * sx * cal.aspect);
     const w = Math.max(0.01, 0.5 * sx);
     return { x: foot.x - w / 2, y: foot.y - h, w, h };
   };
-  const manualFrame = (slot: number, p: Pt): PlayerFrame => {
-    const foot = toImage(p);
+  const manualFrame = (slot: number, p: Pt, cam?: Cam): PlayerFrame => {
+    // Posisi kunci ada di frame kalibrasi → pindahkan ke frame ini bila kamera bergerak.
+    const foot = cam ? camApply(camInvert(cam), toImage(p), cal.aspect) : toImage(p);
     const est = bodyBox(p, foot);
     const lb = lastBox[slot];
     // Ukuran kotak terakhir hanya dipakai bila dari posisi yang mirip kedalamannya.
@@ -307,7 +525,7 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
 
   frames.forEach((f, fi) => {
     const all = f.poses
-      .map((p) => ({ p, c: toCourt(p.foot) }))
+      .map((p) => ({ p, c: toCourt(camApply(f.cam, p.foot, cal.aspect)) }))
       .filter(({ c }) => Number.isFinite(c.x) && c.x > -2 && c.x < spec.W + 2 && c.y > -3.5 && c.y < spec.L + 3.5)
       .sort((a, b) => b.p.score - a.p.score);
     // Buang duplikat (pose ganda untuk orang yang sama).
@@ -321,7 +539,7 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
       const info = slots.map((slot) => {
         const since = fi - lastSeen[slot];
         const ar = anchorRef(bySlot[slot], fi);
-        let ref: Pt | null = last[slot] && since < 45 ? last[slot] : null;
+        let ref: Pt | null = last[slot] && since * dt < 3 ? last[slot] : null;
         let gate = ref ? 1.0 + tol(ref) + 7 * dt * since : Infinity;
         let aGate = Infinity;
         if (ar) {
@@ -337,13 +555,15 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         const { ref, gate, ar, aGate } = info[si];
         const c = mine[ci];
         if (ar && dist(c.c, ar.p) > aGate) return Infinity;
+        // Kaki perkiraan (tertutup net) sedikit kurang dipercaya daripada kaki yang terlihat.
+        const pen = c.p.est ? 0.35 : 0;
         if (ref) {
           const d = dist(c.c, ref);
-          return d > gate ? Infinity : d;
+          return d > gate ? Infinity : d + pen;
         }
         // Belum ada riwayat: pilih deteksi paling yakin; kiri → slot kiri.
         const lr = si === 0 ? c.c.x / spec.W : 1 - c.c.x / spec.W;
-        return (1 - c.p.score) + lr * 0.3;
+        return (1 - c.p.score) + lr * 0.3 + pen;
       };
 
       // Penugasan optimal (maks 2 slot × 6 kandidat → brute force).
@@ -373,15 +593,15 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         const c = best[si] >= 0 ? mine[best[si]] : null;
         // Frame titik kunci: pakai deteksi bila tepat di kunci, selain itu posisi kunci itu sendiri.
         if (ar && ar.d === 0 && (!c || dist(c.c, ar.p) > 0.8 + tol(ar.p))) {
-          tracks[slot].frames.push(manualFrame(slot, ar.p));
+          tracks[slot].frames.push(manualFrame(slot, ar.p, f.cam));
           last[slot] = ar.p;
           lastSeen[slot] = fi;
           return;
         }
         // Tidak terdeteksi tapi diapit dua titik kunci (atau dekat satu kunci): tetap terkunci,
         // posisi mengikuti interpolasi kunci — penting untuk pemain sisi jauh yang sering hilang.
-        if (!c && ar && (ar.between || ar.d <= 8)) {
-          tracks[slot].frames.push(manualFrame(slot, ar.p));
+        if (!c && ar && (ar.between || ar.d * dt <= 0.55)) {
+          tracks[slot].frames.push(manualFrame(slot, ar.p, f.cam));
           return;
         }
         if (!c) {
@@ -404,7 +624,7 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
       });
     }
   });
-  for (const t of tracks) fillGaps(t, 12);
+  for (const t of tracks) fillGaps(t, Math.max(6, Math.round(0.8 / dt)));
   return tracks;
 }
 
@@ -486,6 +706,9 @@ export function trackShuttle(frames: FrameObs[], tracks: Track[], aspect: number
   let p: Pt | null = null;
   let v: Pt = { x: 0, y: 0 };
   let miss = 0;
+  const dt = frameDt(frames);
+  // Lintasan dilacak di ruang frame kalibrasi (gerak kamera dibuang), skala per 1/15 dtk.
+  const k15 = Math.min(1, dt * 15);
   // Skala jarak: sumbu x dikali rasio aspek supaya jarak gambar isotropik.
   const d = (a: Pt, b: Pt) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
   const inBody = (b: Blob, fi: number) =>
@@ -496,50 +719,87 @@ export function trackShuttle(frames: FrameObs[], tracks: Track[], aspect: number
       // Badan inti (tanpa lengan/raket): 60% lebar tengah, dari bahu ke kaki.
       return b.x > x + w * 0.2 && b.x < x + w * 0.8 && b.y > f.shoulderY && b.y < y + h;
     });
-  const cands = frames.map((f, fi) => f.blobs.filter((b) => !inBody(b, fi)));
+  type C = Blob & { ox: number; oy: number };
+  const cands: C[][] = frames.map((f, fi) =>
+    f.blobs
+      .filter((b) => !inBody(b, fi))
+      .map((b) => {
+        const q = camApply(f.cam, b, aspect);
+        return { ...b, x: q.x, y: q.y, ox: b.x, oy: b.y };
+      }),
+  );
+  // Kok putih / bola kuning lebih terang dari latar → blob gelap (bayangan, rambut) diberi penalti.
+  const darkPen = (c: Blob) => (c.contrast !== undefined && c.contrast < 0 ? 0.025 : 0);
+  const pos: (C | null)[] = [];
+  // Badan pemain: jalur pelacak + semua pose terdeteksi (pemain yang belum terlacak juga bergerak).
+  const boxesAt = (fi: number) => [...tracks.map((t) => t.frames[fi]?.box), ...frames[fi].poses.map((p) => p.box)];
+  const nearBody = (c: C, fi: number) =>
+    boxesAt(fi).some((b) => {
+      if (!b) return false;
+      const { x, y, w, h } = b;
+      const mx = Math.max(w * 0.35, 0.01);
+      return c.ox > x - mx && c.ox < x + w + mx && c.oy > y - h * 0.15 && c.oy < y + h;
+    });
+  const bodyMark = cands.map((cs, fi) => cs.map((c) => nearBody(c, fi)));
 
   for (let fi = 0; fi < frames.length; fi++) {
     const cs = cands[fi];
     if (p) {
       const pred: Pt = { x: p.x + v.x, y: p.y + v.y };
-      const gate = 0.06 + Math.hypot(v.x * aspect, v.y) * 0.8;
-      let best: Blob | null = null;
+      const gate = (0.035 + Math.hypot(v.x * aspect, v.y) * 0.6) * (0.5 + 0.5 * k15);
+      let best = null as C | null;
       let bd = Infinity;
-      for (const c of cs) {
+      cs.forEach((c, ci) => {
         const dd = d(c, pred);
-        if (dd < gate && dd < bd) {
-          bd = dd;
+        // Serpihan di badan pemain (tangan, raket, baju) sering mirip kok → sedikit dipersulit.
+        const cost = dd + darkPen(c) + (bodyMark[fi][ci] ? gate * 0.3 : 0);
+        if (dd < gate && cost < bd) {
+          bd = cost;
           best = c;
         }
-      }
+      });
       if (best) {
         const nv = { x: best.x - p.x, y: best.y - p.y };
         v = { x: v.x * 0.3 + nv.x * 0.7, y: v.y * 0.3 + nv.y * 0.7 };
         p = { x: best.x, y: best.y };
         miss = 0;
-        out.push(p);
+        pos.push(best);
         continue;
       }
       miss++;
-      if (miss <= 3) {
+      if (miss <= Math.max(3, Math.round(0.2 / dt))) {
         p = pred;
-        out.push(null);
+        pos.push(null);
         continue;
       }
       p = null;
     }
-    // Mulai lintasan baru: blob yang punya pasangan dekat di frame berikutnya (benda bergerak konsisten).
+    // Mulai lintasan baru: blob yang bergerak konsisten di 3 frame (c → n → n2 kira-kira segaris).
     const next = cands[fi + 1] ?? [];
-    let start: Blob | null = null;
+    const next2 = cands[fi + 2];
+    let start: C | null = null;
     let sv: Pt = { x: 0, y: 0 };
     let sd = Infinity;
-    for (const c of cs) {
+    for (let ci = 0; ci < cs.length; ci++) {
+      // Lintasan baru tidak dimulai dari badan pemain (sumber gerak palsu terbanyak).
+      if (bodyMark[fi][ci]) continue;
+      const c = cs[ci];
       for (const n of next) {
         const dd = d(c, n);
-        if (dd > 0.008 && dd < 0.18 && dd + c.area * 0.0005 < sd) {
-          sd = dd;
+        if (dd <= 0.008 * k15 || dd >= 0.18 * k15) continue;
+        const vv = { x: n.x - c.x, y: n.y - c.y };
+        let ok = !next2; // akhir video: cukup 2 frame
+        if (next2) {
+          const pr = { x: n.x + vv.x, y: n.y + vv.y };
+          const tol = 0.03 + dd * 0.6;
+          ok = next2.some((m) => d(m, pr) < tol);
+        }
+        if (!ok) continue;
+        const score = dd + c.area * 0.0005 + darkPen(c) + darkPen(n);
+        if (score < sd) {
+          sd = score;
           start = c;
-          sv = { x: n.x - c.x, y: n.y - c.y };
+          sv = vv;
         }
       }
     }
@@ -547,9 +807,47 @@ export function trackShuttle(frames: FrameObs[], tracks: Track[], aspect: number
       p = { x: start.x, y: start.y };
       v = sv;
       miss = 0;
-      out.push(p);
-    } else out.push(null);
+      pos.push(start);
+    } else pos.push(null);
   }
+  // Kok/bola melayang selalu berpindah; titik yang nyaris diam (serpihan bergetar) dibuang.
+  const minStep = 0.0035 * k15;
+  const still = pos.map((c, k) => {
+    if (!c) return false;
+    const a = pos[k - 2] ?? pos[k - 1];
+    const b = pos[k + 2] ?? pos[k + 1];
+    if (!a || !b) return false;
+    const span = (pos[k - 2] ? 2 : 1) + (pos[k + 2] ? 2 : 1);
+    return d(a, b) / span < minStep;
+  });
+  still.forEach((x, k) => x && (pos[k] = null));
+  // Validasi tiap potongan lintasan: kok/bola sungguhan TERBANG — berpindah cukup jauh dan sebagian
+  // besar berada di luar badan pemain. Serpihan gerak tangan/raket/baju bergetar di tempat → dibuang.
+  let i = 0;
+  while (i < pos.length) {
+    if (!pos[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    let gap = 0;
+    const run: number[] = [];
+    while (j < pos.length && gap <= 3) {
+      if (pos[j]) {
+        run.push(j);
+        gap = 0;
+      } else gap++;
+      j++;
+    }
+    const endRun = j - gap;
+    const pts = run.map((k) => pos[k]!);
+    let reach = 0;
+    for (const p of pts) reach = Math.max(reach, d(p, pts[0]));
+    const body = run.filter((k) => nearBody(pos[k]!, k)).length / run.length;
+    if (run.length < 3 || reach < 0.07 || body > 0.6) for (let k = i; k < endRun; k++) pos[k] = null;
+    i = endRun;
+  }
+  for (const c of pos) out.push(c ? { x: c.ox, y: c.oy } : null);
   return out;
 }
 
@@ -617,30 +915,29 @@ let hitSeq = 0;
 export const newHitId = () => `h${Date.now().toString(36)}${(hitSeq++).toString(36)}`;
 
 /**
- * Deteksi pukulan: gabungan (1) perubahan arah lintasan kok di dekat pemain dan
- * (2) puncak ayunan pergelangan tangan. Pukulan selalu bergantian sisi net.
+ * Deteksi pukulan: gabungan (1) perubahan arah lintasan kok di dekat pemain, (2) puncak ayunan
+ * pergelangan tangan, dan (3) bunyi "tak" raket dari audio video (`onsets`, detik video).
+ * Pukulan selalu bergantian sisi net.
  */
-export function detectHits(frames: FrameObs[], tracks: Track[], shuttle: (Pt | null)[], sport: Sport, teamSize: 1 | 2): Hit[] {
+export function detectHits(frames: FrameObs[], tracks: Track[], shuttle: (Pt | null)[], sport: Sport, teamSize: 1 | 2, onsets: number[] = []): Hit[] {
   const dt = frameDt(frames);
   const speeds = tracks.map((t) => wristSpeed(t, dt));
-  type Cand = { frame: number; player: number; score: number };
+  type Cand = { frame: number; player: number; score: number; kind: 'turn' | 'wrist' | 'audio' };
   const cands: Cand[] = [];
+  const span = Math.max(2, Math.round(0.13 / dt));
+  const w2 = Math.max(2, Math.round(0.13 / dt));
 
   // (1) Perubahan arah kok yang tajam di dekat tangan pemain.
-  const vel = (i: number, span: number) => {
-    const a = shuttle[i - span];
+  const vel = (i: number, sp: number) => {
+    const a = shuttle[i - sp];
     const b = shuttle[i];
     return a && b ? { x: b.x - a.x, y: b.y - a.y } : null;
   };
-  for (let i = 3; i < shuttle.length - 3; i++) {
+  for (let i = span + 1; i < shuttle.length - span - 1; i++) {
     const s = shuttle[i];
     if (!s) continue;
-    const before = vel(i, 2);
-    const after = (() => {
-      const a = shuttle[i];
-      const b = shuttle[i + 2];
-      return a && b ? { x: b.x - a.x, y: b.y - a.y } : null;
-    })();
+    const before = vel(i, span);
+    const after = vel(i + span, span);
     if (!before || !after) continue;
     const mb = Math.hypot(before.x, before.y);
     const ma = Math.hypot(after.x, after.y);
@@ -670,30 +967,106 @@ export function detectHits(frames: FrameObs[], tracks: Track[], shuttle: (Pt | n
       let bs = 0;
       tracks.forEach((_, pi) => {
         if ((side === 'near') !== isNearSlot(pi, teamSize)) return;
-        const s2 = Math.max(...[-2, -1, 0, 1, 2].map((k) => speeds[pi][i + k] ?? 0));
+        let s2 = 0;
+        for (let k = -w2; k <= w2; k++) s2 = Math.max(s2, speeds[pi][i + k] ?? 0);
         if (s2 > bs) {
           bs = s2;
           best = pi;
         }
       });
       if (best < 0 || bs < 1.2) continue;
-      cands.push({ frame: i, player: best, score: 0.6 + Math.min(0.3, bs / 10) });
-    } else cands.push({ frame: i, player: best, score: 0.95 - bd * 0.25 });
+      cands.push({ frame: i, player: best, score: 0.6 + Math.min(0.3, bs / 10), kind: 'turn' });
+    } else cands.push({ frame: i, player: best, score: 0.95 - bd * 0.25, kind: 'turn' });
   }
 
   // (2) Puncak ayunan pergelangan tangan (berguna saat kok tidak terlihat).
   speeds.forEach((sp, pi) => {
-    for (let i = 2; i < sp.length - 2; i++) {
+    for (let i = w2; i < sp.length - w2; i++) {
       const v = sp[i];
       if (v < 2.6) continue;
-      if (v < sp[i - 1] || v < sp[i + 1] || v < sp[i - 2] || v < sp[i + 2]) continue;
+      let peak = true;
+      for (let k = 1; k <= w2 && peak; k++) if (v < sp[i - k] || v < sp[i + k]) peak = false;
+      if (!peak) continue;
       const f = tracks[pi].frames[i];
       if (!f) continue;
-      cands.push({ frame: i, player: pi, score: Math.min(0.75, 0.35 + v / 12) });
+      cands.push({ frame: i, player: pi, score: Math.min(0.75, 0.35 + v / 12), kind: 'wrist' });
     }
   });
 
+  // (3) Bunyi pukulan. Audio yang wajar (sudah disaring di detectOnsets) menaikkan keyakinan
+  // kandidat yang bertepatan, menurunkan yang tidak, dan menambah pukulan yang terlewat.
+  const t0 = frames[0]?.t ?? 0;
+  const tEnd = frames[frames.length - 1]?.t ?? 0;
+  const frameOf = (t: number) => Math.max(0, Math.min(frames.length - 1, Math.round((t - t0) / dt)));
+  const ons = onsets.filter((t) => t >= t0 - 0.05 && t <= tEnd + 0.05);
+  if (ons.length >= 2) {
+    for (const c of cands) {
+      let d = Infinity;
+      let at = -1;
+      for (const t of ons) {
+        const x = Math.abs(frames[c.frame].t - t);
+        if (x < d) (d = x), (at = t);
+      }
+      if (d <= 0.15) {
+        c.score = Math.min(0.99, c.score + 0.2);
+        // Waktu dari suara lebih tepat daripada puncak ayunan tangan.
+        if (c.kind === 'wrist') c.frame = frameOf(at);
+      } else c.score -= 0.15;
+    }
+    for (const t of ons) {
+      const fi = frameOf(t);
+      if (cands.some((c) => Math.abs(c.frame - fi) * dt <= 0.25)) continue;
+      // Pemukul: ayunan tangan tercepat di sekitar bunyi, atau tangan terdekat ke kok.
+      let best = -1;
+      let bs = 0;
+      speeds.forEach((sp, pi) => {
+        for (let k = -w2; k <= w2; k++) if ((sp[fi + k] ?? 0) > bs) (bs = sp[fi + k]), (best = pi);
+      });
+      if (bs >= 0.8) {
+        cands.push({ frame: fi, player: best, score: 0.55 + Math.min(0.25, bs / 10), kind: 'audio' });
+        continue;
+      }
+      best = -1;
+      const s = shuttle[fi];
+      if (s) {
+        let bd = Infinity;
+        tracks.forEach((tr, pi) => {
+          const f = tr.frames[fi];
+          if (!f) return;
+          const dd = Math.min(dist(f.wristL, s), dist(f.wristR, s)) / Math.max(f.box.h * 0.6, 0.03);
+          if (dd < 1 && dd < bd) (bd = dd), (best = pi);
+        });
+        if (best >= 0) {
+          cands.push({ frame: fi, player: best, score: 0.6, kind: 'audio' });
+          continue;
+        }
+      }
+      // Pemain tak terlihat (mis. tertutup net): pemukul ditentukan dari sisi yang bergiliran.
+      if (sport === 'badminton') cands.push({ frame: fi, player: -1, score: 0.5, kind: 'audio' });
+    }
+  }
+
   cands.sort((a, b) => a.frame - b.frame);
+  // Bunyi tanpa pemain: giliran sisi lawan dari pukulan sebelumnya dalam reli yang sama.
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (c.player >= 0) continue;
+    let prev: Cand | undefined;
+    for (let j = i - 1; j >= 0 && !prev; j--) if (cands[j].player >= 0) prev = cands[j];
+    if (!prev || (c.frame - prev.frame) * dt > RALLY_GAP[sport]) continue;
+    const wantNear = !isNearSlot(prev.player, teamSize);
+    const s = shuttle[c.frame];
+    let best = -1;
+    let bd = Infinity;
+    tracks.forEach((tr, pi) => {
+      if (isNearSlot(pi, teamSize) !== wantNear) return;
+      const f = nearestFrame(tr, c.frame);
+      const dd = f && s ? Math.min(dist(f.wristL, s), dist(f.wristR, s)) : f ? 1 : 2;
+      if (dd < bd) (bd = dd), (best = pi);
+    });
+    c.player = best;
+  }
+  for (let i = cands.length - 1; i >= 0; i--) if (cands[i].player < 0) cands.splice(i, 1);
   // Gabungkan kandidat berdekatan (< 0.35 s) → ambil skor tertinggi.
   const minGap = Math.max(1, Math.round(0.35 / dt));
   const merged: Cand[] = [];
@@ -973,7 +1346,7 @@ const MAX_KMH: Record<Sport, number> = { badminton: 260, padel: 160 };
  * kecepatan puncak saat raket mengenai bola.
  */
 export function shotSpeeds(
-  frames: { t: number }[],
+  frames: FrameInfo[],
   tracks: Track[],
   hits: Hit[],
   shuttle: (Pt | null)[],
@@ -1003,7 +1376,7 @@ export function shotSpeeds(
     let to: Pt | null = null;
     let tEnd = 0;
     if (firstBounce) {
-      to = toCourt(firstBounce.p); // titik pantul/jatuh berada di lantai → proyeksi ke lapangan valid
+      to = toCourt(camApply(frames[firstBounce.frame]?.cam, firstBounce.p, cal.aspect)); // titik pantul/jatuh berada di lantai → proyeksi ke lapangan valid
       tEnd = firstBounce.t;
     } else if (next && (next.player < teamSize) !== (h.player < teamSize)) {
       to = posAt(next.player, next.frame);
@@ -1018,4 +1391,35 @@ export function shotSpeeds(
     out.set(h.id, { kmh, meters, seconds });
   });
   return out;
+}
+
+/* ---------------- kualitas rekaman ---------------- */
+
+export interface Quality {
+  level: 'good' | 'ok' | 'poor';
+  /** Pergeseran kamera terbesar dari frame kalibrasi (proporsi tinggi frame). */
+  camDrift: number;
+  /** Proporsi frame tiap slot pemain yang terdeteksi langsung (bukan interpolasi/kunci). */
+  coverage: number[];
+  /** Proporsi frame dengan kok/bola terlihat. */
+  shuttle: number;
+  /** Jumlah bunyi pukulan dari audio; null = video tanpa suara / audio tak terbaca. */
+  onsets: number | null;
+  /** Sisi pendek video (piksel). */
+  res: number;
+}
+
+export function assessQuality(frames: FrameInfo[], tracks: Track[], shuttle: (Pt | null)[], onsets: number[] | null, res: number): Quality {
+  const n = Math.max(1, frames.length);
+  let camDrift = 0;
+  for (const f of frames) if (f.cam) camDrift = Math.max(camDrift, Math.hypot(f.cam[2], f.cam[3]), Math.abs(f.cam[0] - 1) * 2, Math.abs(f.cam[1]) * 2);
+  const coverage = tracks.map((t) => t.frames.filter((f) => f && !f.interp && !f.manual).length / n);
+  const sh = shuttle.filter(Boolean).length / n;
+  let bad = 0;
+  if (camDrift > 0.06) bad += camDrift > 0.15 ? 2 : 1;
+  if (res && res < 700) bad++;
+  const low = coverage.filter((c) => c < 0.4).length;
+  if (low) bad += low >= Math.ceil(coverage.length / 2) ? 2 : 1;
+  if (sh < 0.08) bad++;
+  return { level: bad >= 3 ? 'poor' : bad ? 'ok' : 'good', camDrift, coverage, shuttle: sh, onsets: onsets ? onsets.length : null, res };
 }

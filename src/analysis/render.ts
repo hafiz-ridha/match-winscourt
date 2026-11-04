@@ -1,5 +1,5 @@
 /** Gambar overlay analisis (nama pemain, jejak kok, label pukulan, peta mini) dan ekspor video. */
-import { calibMaps, RALLY_GAP, detectBounces, shotSpeeds, type ShotSpeed, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
+import { calibMaps, camApply, camInvert, type FrameInfo, type Quality, RALLY_GAP, detectBounces, shotSpeeds, type ShotSpeed, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
 
 export const PLAYER_COLORS = ['#C6FF3D', '#2BC58A', '#38BDF8', '#FB923C'];
 const INK = '#0E1714';
@@ -199,7 +199,7 @@ export interface Result {
   teamSize: 1 | 2;
   cal: Calib;
   start: number;
-  frames: { t: number }[];
+  frames: FrameInfo[];
   tracks: Track[];
   shuttle: (Pt | null)[];
   hits: Hit[];
@@ -214,6 +214,12 @@ export interface Result {
   style?: ExportStyle;
   /** Peringkat 5 besar (opsional, null = tidak ditampilkan). */
   ranking?: Ranking | null;
+  /** Bunyi pukulan dari audio (detik video); null = tanpa suara. */
+  onsets?: number[] | null;
+  /** Penilaian kualitas rekaman. */
+  quality?: Quality;
+  /** Diproses dengan mode akurasi tinggi. */
+  hq?: boolean;
 }
 
 export const frameAt = (r: Result, t: number) => {
@@ -472,7 +478,9 @@ function drawBall(ctx: CanvasRenderingContext2D, r: Result, f0: number, frac: nu
   if (fx === 'off') return;
   // Lintasan mundur dari frame sekarang sampai pukulan terakhir (ekor dimulai dari pemukul).
   // Celah deteksi ≤ 4 frame disambung supaya ekor tidak putus-putus.
-  const span = fx === 'comet' ? 15 : fx === 'tail' ? 10 : 8;
+  // Panjang ekor tetap ±1 dtk / 0,7 dtk walau video diproses 30 fps (mode akurasi tinggi).
+  const kf = Math.max(1, Math.round(1 / 15 / frameDt(r.frames)));
+  const span = (fx === 'comet' ? 15 : fx === 'tail' ? 10 : 8) * kf;
   let lastHit = -Infinity;
   for (const h of r.hits) if (h.frame <= f0 && h.frame > lastHit) lastHit = h.frame;
   const path = ballPath(r);
@@ -485,7 +493,7 @@ function drawBall(ctx: CanvasRenderingContext2D, r: Result, f0: number, frac: nu
     if (s) {
       pts.unshift(s);
       gap = 0;
-    } else if (++gap > 4) break;
+    } else if (++gap > 4 * kf) break;
   }
   const cur = path[f0];
   const nextS = path[f0 + 1];
@@ -659,7 +667,7 @@ export function ballPath(r: Result): (Pt | null)[] {
       const len = c.f - a.f;
       if (len <= 1) continue;
       // Celah panjang tanpa deteksi: lengkungan ke atas (lambungan) sebanding jarak; celah pendek: lurus.
-      const arc = len >= 6 ? Math.min(0.22, Math.hypot(c.p.x - a.p.x, c.p.y - a.p.y) * 0.35) : 0;
+      const arc = len * dt >= 0.4 ? Math.min(0.22, Math.hypot(c.p.x - a.p.x, c.p.y - a.p.y) * 0.35) : 0;
       for (let f = a.f + 1; f < c.f; f++) {
         if (out[f]) continue;
         const q = (f - a.f) / len;
@@ -668,11 +676,11 @@ export function ballPath(r: Result): (Pt | null)[] {
     }
     if (!out[h.frame]) out[h.frame] = start;
   });
-  // Celah pendek (≤ 6 frame) di antara deteksi yang tidak tertambat pukulan: sambung lurus.
+  // Celah pendek (≤ 0,4 dtk) di antara deteksi yang tidak tertambat pukulan: sambung lurus.
   let last = -1;
   for (let f = 0; f < n; f++) {
     if (!out[f]) continue;
-    if (last >= 0 && f - last > 1 && f - last <= 6) {
+    if (last >= 0 && f - last > 1 && (f - last) * dt <= 0.4) {
       const a = out[last]!;
       const c = out[f]!;
       for (let g = last + 1; g < f; g++) {
@@ -845,7 +853,11 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, r: Result, fi: number
   ctx.lineJoin = 'round';
 
   if (o.court) {
-    const { spec, toImage } = calibMaps(r.cal);
+    const { spec, toImage: toRef } = calibMaps(r.cal);
+    // Kalibrasi dibuat di frame acuan → ikuti gerak kamera frame ini.
+    const cam = r.frames[fi]?.cam;
+    const inv = cam && camInvert(cam);
+    const toImage = (p: Pt) => (inv ? camApply(inv, toRef(p), r.cal.aspect) : toRef(p));
     ctx.strokeStyle = 'rgba(198,255,61,0.55)';
     ctx.lineWidth = Math.max(1.5, u / 6);
     for (const [a, b] of courtLines(spec)) {

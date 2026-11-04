@@ -3,13 +3,20 @@ import assert from 'node:assert/strict';
 import {
   apply,
   calibMaps,
+  camApply,
+  camCompose,
+  camInvert,
+  camRebase,
   detectHits,
+  detectOnsets,
+  estimateMotion,
   homography,
   kcalFor,
   summarize,
   swapSlots,
   trackPlayers,
   trackShuttle,
+  type Cam,
   type Calib,
   type FrameObs,
   type PoseObs,
@@ -337,4 +344,120 @@ test('kunci pemain sisi jauh: deteksi berisik & hilang tetap terkunci di antara 
   // Kotak badan posisi manual pemain jauh lebih kecil dari pemain dekat.
   const manual = tr[1].frames[30]!;
   assert.ok(manual.manual && manual.box.h < tr[0].frames[30]!.box.h, 'penanda pemain jauh berukuran sesuai perspektif');
+});
+
+/* ---------------- gerak kamera, suara pukulan ---------------- */
+
+/** Tekstur abu-abu halus deterministik (W×H), digeser (dx, dy) piksel dengan interpolasi bilinear. */
+function texture(W: number, H: number, dx = 0, dy = 0) {
+  const f = (x: number, y: number) =>
+    128 + 50 * Math.sin(x * 0.21 + Math.cos(y * 0.13) * 2) + 40 * Math.cos(y * 0.17 + Math.sin(x * 0.07) * 3) + 25 * Math.sin((x + y) * 0.31);
+  const out = new Uint8ClampedArray(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) out[y * W + x] = f(x + dx, y + dy);
+  return out;
+}
+
+test('gerak kamera: geser terdeteksi sub-piksel, kamera diam = identitas', () => {
+  const W = 320;
+  const H = 180;
+  const prev = texture(W, H);
+  const still = estimateMotion(texture(W, H), prev, W, H);
+  assert.ok(still);
+  assert.deepEqual(still.cam, [1, 0, 0, 0]);
+  // Frame sekarang = isi frame lalu yang bergeser: piksel (x,y) sekarang = (x+5.4, y−3) di frame lalu.
+  const m = estimateMotion(texture(W, H, 5.4, -3), prev, W, H);
+  assert.ok(m);
+  assert.ok(Math.abs(m.cam[2] - 5.4) < 0.5 && Math.abs(m.cam[3] + 3) < 0.5, `geser ${m.cam[2].toFixed(2)}, ${m.cam[3].toFixed(2)}`);
+  // Komposisi & invers konsisten.
+  const c: Cam = [1.01, 0.02, 0.05, -0.03];
+  const p = { x: 0.3, y: 0.6 };
+  const q = camApply(camInvert(c), camApply(c, p, 16 / 9), 16 / 9);
+  assert.ok(Math.abs(q.x - p.x) < 1e-9 && Math.abs(q.y - p.y) < 1e-9);
+  const frames = [{ cam: c }, { cam: camCompose(c, [1, 0, 0.1, 0]) as Cam }];
+  camRebase(frames, 0);
+  assert.ok(Math.abs(frames[0].cam[2]) < 1e-9 && Math.abs(frames[1].cam[0] - 1) < 1e-9);
+});
+
+test('kamera dipegang tangan: posisi pemain & kok tetap benar setelah dikoreksi', () => {
+  const { frames } = rally(6);
+  const n = frames.length;
+  const off = (f: number) => ({ x: 0.06 * Math.sin(f / 9), y: 0.04 * (f / n) });
+  const sh = (p: Pt, o: Pt) => ({ x: p.x + o.x, y: p.y + o.y });
+  const moved: FrameObs[] = frames.map((fr, f) => {
+    const o = off(f);
+    const sp = (pp: PoseObs): PoseObs => ({
+      ...pp,
+      foot: sh(pp.foot, o),
+      box: { ...pp.box, x: pp.box.x + o.x, y: pp.box.y + o.y },
+      wristL: sh(pp.wristL, o),
+      wristR: sh(pp.wristR, o),
+      shoulderL: sh(pp.shoulderL, o),
+      shoulderR: sh(pp.shoulderR, o),
+      nose: sh(pp.nose, o),
+    });
+    // cam: frame ini → frame acuan = geser balik (ruang isotropik x·aspek).
+    return { ...fr, poses: fr.poses.map(sp), blobs: fr.blobs.map((b) => ({ ...b, ...sh(b, o) })), cam: [1, 0, -o.x * cal.aspect, -o.y] as Cam };
+  });
+  const ref = trackPlayers(frames, cal, 1);
+  const tr = trackPlayers(moved, cal, 1);
+  let worst = 0;
+  tr.forEach((t, s) =>
+    t.frames.forEach((f, i) => {
+      const g = ref[s].frames[i];
+      if (f && g) worst = Math.max(worst, Math.hypot(f.court.x - g.court.x, f.court.y - g.court.y));
+    }),
+  );
+  assert.ok(worst < 0.05, `selisih posisi ${worst.toFixed(3)} m`);
+  // Titik gambar tetap mengikuti video (untuk overlay), bukan frame acuan.
+  const f5 = tr[0].frames[30]!;
+  assert.ok(Math.abs(f5.foot.x - moved[30].poses[0].foot.x) < 1e-9);
+  const shuttle = trackShuttle(moved, tr, cal.aspect);
+  assert.ok(shuttle.filter(Boolean).length > n * 0.6, 'kok tetap terlacak walau kamera bergerak');
+  const hits = detectHits(moved, tr, shuttle, 'badminton', 1);
+  assert.ok(hits.length >= 4, `pukulan ${hits.length}`);
+});
+
+test('suara pukulan: bunyi "tak" pendek terdeteksi, suara pelan & derau diabaikan', () => {
+  const sr = 22050;
+  const x = new Float32Array(sr * 8);
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+  for (let i = 0; i < x.length; i++) x[i] = rnd() * 0.002 + 0.05 * Math.sin((i / sr) * 2 * Math.PI * 120); // dengung lampu
+  const hitsAt = [1, 2.3, 4.1, 6.05];
+  for (const t of hitsAt) {
+    const a = Math.round(t * sr);
+    for (let k = 0; k < sr * 0.06; k++) x[a + k] += rnd() * 0.5 * Math.exp(-k / (sr * 0.008));
+  }
+  // Suara orang (naik pelan 200 ms, nada rendah) di 3 dtk.
+  for (let k = 0; k < sr * 0.6; k++) x[Math.round(3 * sr) + k] += 0.3 * Math.min(1, k / (sr * 0.2)) * Math.sin((k / sr) * 2 * Math.PI * 220);
+  const on = detectOnsets(x, sr);
+  assert.equal(on.length, hitsAt.length, `bunyi ${on.map((t) => t.toFixed(2)).join(', ')}`);
+  on.forEach((t, i) => assert.ok(Math.abs(t - hitsAt[i]) < 0.02));
+  // Musik/derau ramai: terlalu banyak lonjakan → audio tidak dipakai.
+  const busy = new Float32Array(sr * 4);
+  for (let i = 0; i < busy.length; i++) busy[i] = rnd() * 0.002;
+  for (let t = 0.1; t < 3.9; t += 0.18) {
+    const a = Math.round(t * sr);
+    for (let k = 0; k < sr * 0.03; k++) busy[a + k] += rnd() * 0.4 * Math.exp(-k / (sr * 0.005));
+  }
+  assert.deepEqual(detectOnsets(busy, sr), []);
+});
+
+test('suara pukulan: pukulan yang tak terlihat (kok hilang) tetap terhitung dari bunyi', () => {
+  const n = 8;
+  const { frames, per } = rally(n);
+  // Kok sama sekali tidak terlihat (mis. terlalu kabur).
+  const blind = frames.map((f) => ({ ...f, blobs: [] }));
+  const tracks = trackPlayers(blind, cal, 1);
+  const shuttle = trackShuttle(blind, tracks, cal.aspect);
+  const without = detectHits(blind, tracks, shuttle, 'badminton', 1);
+  const onsets = Array.from({ length: n }, (_, k) => (k * per) / 15 + 0.01);
+  const withAudio = detectHits(blind, tracks, shuttle, 'badminton', 1, onsets);
+  assert.ok(withAudio.length >= n - 1, `dengan suara ${withAudio.length}, tanpa suara ${without.length}`);
+  assert.ok(withAudio.length >= without.length);
+  for (const h of withAudio) {
+    const k = Math.round(h.frame / per);
+    assert.ok(Math.abs(h.frame - k * per) <= 1, `frame ${h.frame}`);
+    assert.equal(h.player, k % 2 === 0 ? 0 : 1, 'pemukul bergantian sesuai sisi');
+  }
 });

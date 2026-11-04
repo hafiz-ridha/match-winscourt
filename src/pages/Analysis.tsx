@@ -3,7 +3,11 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, auth, type SessionSummary } from '../api.ts';
 import { playerStandings } from '../../shared/standings.ts';
 import {
+  assessQuality,
   calibMaps,
+  camApply,
+  camInvert,
+  camRebase,
   classifyAll,
   courtLines,
   detectHits,
@@ -24,16 +28,27 @@ import {
   type FrameObs,
   type Pt,
   type Quad,
+  type Quality,
   type Sport,
 } from '../analysis/core.ts';
 import { DEFAULT_STYLE, drawExportFrame, speedsOf, drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type ExportStyle, type Ranking, type Result } from '../analysis/render.ts';
 import { exportMp4, mp4Codec, type Mp4Info } from '../analysis/mp4.ts';
-import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
+import { farTileCount, FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
+import { audioOnsets } from '../analysis/audio.ts';
 import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
 import { LoginCard } from './Home.tsx';
 
-const FPS = 15;
+/** Frame per detik yang dianalisis: 15 (normal) atau 30 (mode akurasi tinggi). */
+const fpsOf = (hq: boolean) => (hq ? 30 : 15);
+const HQ_KEY = 'mwc.hq';
+const loadHq = () => {
+  try {
+    return localStorage.getItem(HQ_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 /** Nilai panjang klip = sampai akhir video. */
 const ALL_CLIP = 9999;
 const STEPS = ['Video', 'Lapangan', 'Proses', 'Periksa', 'Hasil'];
@@ -146,6 +161,15 @@ function AnalysisApp() {
   // Penanda posisi pemain di frame awal (gambar ternormalisasi) per slot; null = tidak dikunci.
   const [marks, setMarks] = useState<(Pt | null)[]>([]);
   const [result, setResult] = useState<Result | null>(null);
+  const [hq, setHqState] = useState(loadHq);
+  const setHq = (v: boolean) => {
+    setHqState(v);
+    try {
+      localStorage.setItem(HQ_KEY, v ? '1' : '0');
+    } catch {
+      /* penyimpanan tidak tersedia */
+    }
+  };
   const procVideo = useRef<HTMLVideoElement>(null);
 
   // Dari kartu match di sesi: isi olahraga, format & nama pemain otomatis.
@@ -253,6 +277,8 @@ function AnalysisApp() {
           names={names}
           marks={marks}
           setMarks={setMarks}
+          hq={hq}
+          setHq={setHq}
           onBack={() => setStep(0)}
           onNext={() => setStep(2)}
         />
@@ -260,13 +286,15 @@ function AnalysisApp() {
       {step === 2 && meta && (
         <ProcessStep
           video={procVideo}
+          src={src!}
+          hq={hq}
           setup={setup}
           cal={{ sport: setup.sport, quad, aspect: meta.aspect, ref: calRef }}
           start={clip.start}
           end={end}
           names={names}
           anchors={marks.flatMap((m, slot) =>
-            m && slot < setup.teamSize * 2 ? [{ slot, frame: Math.round(0.5 * FPS), court: calibMaps({ sport: setup.sport, quad, aspect: meta.aspect, ref: calRef }).toCourt(m) }] : [],
+            m && slot < setup.teamSize * 2 ? [{ slot, frame: Math.round(0.5 * fpsOf(hq)), court: calibMaps({ sport: setup.sport, quad, aspect: meta.aspect, ref: calRef }).toCourt(m) }] : [],
           )}
           onCancel={() => setStep(1)}
           onDone={(r) => {
@@ -275,7 +303,23 @@ function AnalysisApp() {
           }}
         />
       )}
-      {step === 3 && result && src && <ReviewStep src={src} r={result} setR={setResult} onBack={() => setStep(1)} onNext={() => setStep(4)} />}
+      {step === 3 && result && src && (
+        <ReviewStep
+          src={src}
+          r={result}
+          setR={setResult}
+          onBack={() => setStep(1)}
+          onNext={() => setStep(4)}
+          onHq={
+            result.hq
+              ? undefined
+              : () => {
+                  setHq(true);
+                  setStep(2);
+                }
+          }
+        />
+      )}
       {step === 4 && result && src && <ResultStep src={src} r={result} setR={setResult} patch={(x) => setResult((cur) => (cur ? { ...cur, ...x } : cur))} end={end} onBack={() => setStep(3)} from={setup.from} />}
     </div>
   );
@@ -453,10 +497,20 @@ function SetupStep({
           <b className="small">Tips rekam supaya akurat</b>
         </div>
         <ul className="an-tips small mute">
-          <li>Kamera diam (tripod / disandarkan) di belakang baseline, agak tinggi.</li>
-          <li>Seluruh lapangan & keempat sudutnya terlihat.</li>
-          <li>Cahaya cukup; hindari melawan lampu atau jendela.</li>
-          <li>Rekam horizontal 30–60 fps.</li>
+          <li>
+            <b>Kamera diam</b>: pakai tripod atau sandarkan HP. Kamera yang dipegang tangan tetap bisa, tapi kurang akurat.
+          </li>
+          <li>
+            <b>Tinggi & agak jauh</b> di belakang baseline (±2–3 m di atas lantai), supaya pemain jauh tidak tertutup net.
+          </li>
+          <li>Seluruh lapangan terlihat. Kalau ada sudut terpotong, pilih titik acuan lain di langkah Lapangan.</li>
+          <li>
+            Rekam <b>1080p 60 fps</b> bila bisa: kok/bola kecil jadi lebih tajam dan tidak kabur.
+          </li>
+          <li>Cahaya terang dan merata; hindari merekam melawan lampu atau jendela.</li>
+          <li>
+            <b>Suara aktif</b> (jangan dibisukan): bunyi raket membantu AI menghitung pukulan. Hindari musik latar.
+          </li>
         </ul>
       </div>
 
@@ -484,12 +538,16 @@ function CalibStep({
   names,
   marks,
   setMarks,
+  hq,
+  setHq,
   onBack,
   onNext,
 }: {
   src: string;
   sport: Sport;
   at: number;
+  hq: boolean;
+  setHq: (v: boolean) => void;
   quad: Quad;
   setQuad: (q: Quad) => void;
   calRef: CalibRef;
@@ -776,6 +834,22 @@ function CalibStep({
         </div>
       </div>
 
+      <div className="card stack" style={{ gap: 8 }}>
+        <Switch
+          on={hq}
+          onChange={setHq}
+          label="Mode akurasi tinggi"
+          hint="Lebih teliti untuk pemain jauh & kok/bola kecil (30 frame/dtk, sisi jauh diperbesar)"
+        />
+        {hq && (
+          <div className="banner banner-warn small">
+            <span>
+              Proses analisis akan <b>±2–3× lebih lama</b> dan HP bisa lebih panas. Biarkan layar menyala sampai selesai.
+            </span>
+          </div>
+        )}
+      </div>
+
       <div className="row">
         <button className="btn btn-ghost" onClick={onBack}>
           Kembali
@@ -792,6 +866,8 @@ function CalibStep({
 
 function ProcessStep({
   video,
+  src,
+  hq,
   setup,
   cal,
   start,
@@ -802,6 +878,8 @@ function ProcessStep({
   onDone,
 }: {
   video: React.RefObject<HTMLVideoElement | null>;
+  src: string;
+  hq: boolean;
   setup: Setup;
   cal: Calib;
   start: number;
@@ -835,9 +913,12 @@ function ProcessStep({
         } catch {
           /* tidak didukung */
         }
-        engine = await loadEngine(setup.teamSize, setStatus);
+        // Bunyi pukulan dibaca dari audio sambil frame diproses.
+        const onsetsP = audioOnsets(src, start, end);
+        engine = await loadEngine(setup.teamSize, setStatus, hq, farTileCount(cal, v.videoWidth, v.videoHeight, hq));
         if (cancelled.current) return;
         setDelegate(engine.delegate);
+        const FPS = fpsOf(hq);
         const proc = new FrameProcessor(engine, v, cal);
         const obs: FrameObs[] = [];
         const total = Math.max(1, Math.floor((end - start) * FPS));
@@ -860,16 +941,23 @@ function ProcessStep({
         setStatus('Menghitung pukulan…');
         setProgress(1);
         await new Promise((r) => setTimeout(r, 30));
+        // Kalibrasi lapangan dibuat di frame 0,5 dtk → frame itu jadi acuan gerak kamera.
+        camRebase(obs, Math.round(0.5 * FPS));
+        const onsets = await onsetsP;
         const calib: Calib = { sport: cal.sport, quad: cal.quad, aspect: cal.aspect, ref: cal.ref };
         const tracks = trackPlayers(obs, calib, setup.teamSize, anchors);
         const shuttle = trackShuttle(obs, tracks, cal.aspect);
-        const hits = detectHits(obs, tracks, shuttle, cal.sport, setup.teamSize);
+        const hits = detectHits(obs, tracks, shuttle, cal.sport, setup.teamSize, onsets ?? []);
+        const frames = obs.map((o) => ({ t: o.t, cam: o.cam }));
         onDone({
           sport: cal.sport,
           teamSize: setup.teamSize,
           cal: calib,
           start,
-          frames: obs.map((o) => ({ t: o.t })),
+          frames,
+          onsets,
+          hq,
+          quality: assessQuality(frames, tracks, shuttle, onsets, Math.min(v.videoWidth, v.videoHeight)),
           tracks,
           shuttle,
           hits,
@@ -913,6 +1001,7 @@ function ProcessStep({
           {eta !== null && <span className="tiny mute num">sisa ±{mmss(eta)}</span>}
         </div>
         {delegate === 'CPU' && <div className="tiny mute">HP ini memakai mode CPU, proses lebih lama. Hasil tetap sama.</div>}
+        {hq && <div className="tiny mute">Mode akurasi tinggi aktif: proses ±2–3× lebih lama dari biasa.</div>}
         <div className="row">
           <button
             className="btn btn-ghost grow"
@@ -968,7 +1057,61 @@ function drawPreview(c: HTMLCanvasElement | null, v: HTMLVideoElement, o: FrameO
 
 /* ---------------- 4. Periksa ---------------- */
 
-function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; setR: (r: Result) => void; onBack: () => void; onNext: () => void }) {
+/** Ringkasan kualitas rekaman + saran supaya hasil berikutnya lebih akurat. */
+function QualityNote({ q, names, sport, onHq }: { q: Quality; names: string[]; sport: Sport; onHq?: () => void }) {
+  const ball = sport === 'padel' ? 'bola' : 'kok';
+  const issues: string[] = [];
+  if (q.camDrift > 0.06) issues.push('Kamera bergerak selama rekaman. Posisi sudah dikoreksi otomatis, tapi tripod memberi hasil paling akurat.');
+  const low = q.coverage.map((c, i) => ({ c, n: names[i] })).filter((x) => x.c < 0.4);
+  if (low.length)
+    issues.push(
+      `${low.map((x) => `${x.n} (${Math.round(x.c * 100)}%)`).join(', ')} jarang terlihat jelas. Kunci posisinya lewat "Koreksi posisi pemain" di bawah, atau rekam dari tempat lebih tinggi.`,
+    );
+  if (q.shuttle < 0.08) issues.push(`${ball[0].toUpperCase() + ball.slice(1)} jarang terdeteksi. Rekam 60 fps dengan cahaya terang supaya ${ball} tidak kabur.`);
+  if (q.res && q.res < 700) issues.push(`Resolusi video rendah (${q.res}p). Rekam minimal 720p, lebih baik 1080p.`);
+  if (q.onsets === null) issues.push('Video tanpa suara: pukulan dihitung dari gerakan saja. Rekam dengan suara aktif supaya bunyi raket ikut membantu.');
+  const label = q.level === 'good' ? 'Baik' : q.level === 'ok' ? 'Cukup' : 'Kurang';
+  return (
+    <div className={`banner ${q.level === 'good' ? 'banner-lime' : 'banner-warn'} small stack`} style={{ gap: 6 }}>
+      <div>
+        Kualitas rekaman: <b>{label}</b>
+        {q.onsets ? <span className="mute"> · {q.onsets} bunyi pukulan terdengar</span> : null}
+      </div>
+      {issues.length > 0 && (
+        <ul className="an-tips" style={{ margin: 0 }}>
+          {issues.map((x) => (
+            <li key={x}>{x}</li>
+          ))}
+        </ul>
+      )}
+      {onHq && q.level !== 'good' && (
+        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onHq}>
+            Proses ulang dengan akurasi tinggi
+          </button>
+          <span className="tiny mute">±2–3× lebih lama</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewStep({
+  src,
+  r,
+  setR,
+  onBack,
+  onNext,
+  onHq,
+}: {
+  src: string;
+  r: Result;
+  setR: (r: Result) => void;
+  onBack: () => void;
+  onNext: () => void;
+  /** Proses ulang dengan mode akurasi tinggi (tidak ada bila sudah). */
+  onHq?: () => void;
+}) {
   const video = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -1081,7 +1224,8 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
     }
     const { spec, toImage } = calibMaps(r.cal);
     const near = slot < r.teamSize;
-    return toImage({ x: spec.W * (r.teamSize === 1 ? 0.5 : slot % r.teamSize ? 0.72 : 0.28), y: near ? spec.L * 0.8 : spec.L * 0.2 });
+    const cam = r.frames[fiNow]?.cam;
+    return camApply(cam && camInvert(cam), toImage({ x: spec.W * (r.teamSize === 1 ? 0.5 : slot % r.teamSize ? 0.72 : 0.28), y: near ? spec.L * 0.8 : spec.L * 0.2 }), r.cal.aspect);
   };
   const pointer = (e: RPointerEvent): Pt | null => {
     const b = playerBox.current?.getBoundingClientRect();
@@ -1096,7 +1240,8 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
   };
   const commitPos = () => {
     if (!pdrag) return;
-    const court = calibMaps(r.cal).toCourt(pdrag.p);
+    // Titik di frame ini → frame kalibrasi (kamera bisa bergerak) → lapangan.
+    const court = calibMaps(r.cal).toCourt(camApply(r.frames[fiNow]?.cam, pdrag.p, r.cal.aspect));
     retrack([...anchors.filter((a) => !(a.slot === pdrag.slot && a.frame === fiNow)), { slot: pdrag.slot, frame: fiNow, court }]);
     setPdrag(null);
   };
@@ -1108,6 +1253,7 @@ function ReviewStep({ src, r, setR, onBack, onNext }: { src: string; r: Result; 
           <h3>Periksa pukulan</h3>
           <span className="chip tiny">{r.hits.length} pukulan</span>
         </div>
+        {r.quality && <QualityNote q={r.quality} names={r.names} sport={r.sport} onHq={onHq} />}
         <p className="small mute">
           Geser garis waktu. Ketuk tanda bulat untuk mengubah pemukul atau jenis pukulan. Ada pukulan terlewat? Berhenti di saat raket kena {r.sport === 'padel' ? 'bola' : 'kok'}, tekan <b>+</b>. Salah deteksi? Pilih lalu tekan <b>−</b>.
         </p>
