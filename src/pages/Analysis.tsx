@@ -24,7 +24,7 @@ import {
   type Quad,
   type Sport,
 } from '../analysis/core.ts';
-import { drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type Ranking, type Result } from '../analysis/render.ts';
+import { DEFAULT_STYLE, drawExportFrame, drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type ExportStyle, type Ranking, type Result } from '../analysis/render.ts';
 import { exportMp4, mp4Codec, type Mp4Info } from '../analysis/mp4.ts';
 import { FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
 import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
@@ -1241,8 +1241,15 @@ function ResultStep({
   const st = useMemo(() => summarize(r.frames, r.tracks, r.hits, r.sport, r.teamSize, r.weights), [r]);
   const [layout, setLayout] = useState<'portrait' | 'landscape'>('portrait');
   const [showKcal, setShowKcal] = useState(true);
-  const [shuttleAnim, setShuttleAnim] = useState(true);
-  const [shotPos, setShotPos] = useState<'panel' | 'video'>('video');
+  // Gaya video pilihan pengguna (diingat di perangkat ini).
+  const [vs, setVs] = useState<ExportStyle>(loadStyle);
+  const setV = (p: Partial<ExportStyle>) =>
+    setVs((cur) => {
+      const n = { ...cur, ...p };
+      saveStyle(n);
+      return n;
+    });
+  const styled = useMemo<Result>(() => ({ ...r, style: vs }), [r, vs]);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
   const [out, setOut] = useState<{ url: string; blob: Blob; mime: string; info?: Mp4Info } | null>(null);
@@ -1292,7 +1299,6 @@ function ResultStep({
       // Utama: MP4 standar (H.264 + AAC, 30 fps konstan, faststart) yang diterima Instagram.
       // Cadangan untuk browser tanpa WebCodecs: rekaman MediaRecorder.
       const codec = await mp4Codec(layout === 'portrait' ? 720 : 1280, layout === 'portrait' ? 1280 : 720);
-      const styled: Result = { ...r, style: { shuttle: shuttleAnim, shotPos } };
       const res = codec
         ? await exportMp4({ src, r: styled, layout, showKcal, end, codec, onProgress: setProg, signal: signal.current })
         : await exportVideo({ src, r: styled, layout, showKcal, end, onProgress: setProg, signal: signal.current, audio });
@@ -1464,27 +1470,12 @@ function ResultStep({
             { v: 'landscape', label: 'Lebar 16:9' },
           ]}
         />
+        <StylePreview src={src} r={styled} layout={layout} showKcal={showKcal} />
+        <VideoStyleEditor vs={vs} setV={setV} sport={r.sport} />
         <Switch on={showKcal} onChange={setShowKcal} label="Tampilkan kalori" hint="Perkiraan dari jarak lari & berat badan" />
-        <Switch
-          on={shuttleAnim}
-          onChange={setShuttleAnim}
-          label={`Animasi ${r.sport === 'padel' ? 'bola' : 'kok'}`}
-          hint={`Jejak lintasan ${r.sport === 'padel' ? 'bola' : 'kok'} di video`}
-        />
-        <div className="stack" style={{ gap: 6 }}>
-          <span className="label">Label jenis pukulan</span>
-          <Seg
-            value={shotPos}
-            onChange={setShotPos}
-            options={[
-              { v: 'panel', label: 'Di atas (panel)' },
-              { v: 'video', label: 'Di dalam video' },
-            ]}
-          />
-          <span className="tiny mute">
-            {shotPos === 'panel' ? 'Pukulan terakhir tampil di panel atas, di bawah Pukulan | Reli — video tetap bersih.' : 'Label muncul sebentar di atas pemain yang memukul.'}
-          </span>
-        </div>
+        <button type="button" className="btn btn-ghost btn-xs" style={{ alignSelf: 'flex-start' }} onClick={() => setV(DEFAULT_STYLE)}>
+          Kembalikan gaya bawaan
+        </button>
         {!supported && <div className="banner banner-warn small">Browser ini belum mendukung perekaman video. Coba Chrome atau Safari versi terbaru.</div>}
         {busy ? (
           <>
@@ -1658,6 +1649,182 @@ function RankingPicker({ r, patch, from }: { r: Result; patch: (x: Partial<Resul
           <div className="tiny mute">Nama pemain match ini ditandai lime. Bila di luar 5 besar, tetap ditampilkan di baris terakhir video.</div>
         </>
       )}
+    </div>
+  );
+}
+
+/* ---------------- gaya video (kustomisasi pengguna) ---------------- */
+
+const STYLE_KEY = 'mwc.vstyle';
+function loadStyle(): ExportStyle {
+  try {
+    return { ...DEFAULT_STYLE, ...(JSON.parse(localStorage.getItem(STYLE_KEY) ?? '{}') as Partial<ExportStyle>) };
+  } catch {
+    return DEFAULT_STYLE;
+  }
+}
+function saveStyle(s: ExportStyle) {
+  try {
+    localStorage.setItem(STYLE_KEY, JSON.stringify(s));
+  } catch {
+    /* mode privat */
+  }
+}
+
+function OptChips<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { v: T; label: string }[] }) {
+  return (
+    <div className="an-chips" role="radiogroup">
+      {options.map((o) => (
+        <button key={o.v} type="button" role="radio" aria-checked={o.v === value} className={o.v === value ? 'on' : ''} onClick={() => onChange(o.v)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const THEME_OPTS: { v: ExportStyle['theme']; label: string; bg: string; accent: string; text: string }[] = [
+  { v: 'dark', label: 'Gelap', bg: '#0E1714', accent: '#C6FF3D', text: '#fff' },
+  { v: 'light', label: 'Terang', bg: '#FAFAF7', accent: '#3F6B0F', text: '#0E1714' },
+  { v: 'glass', label: 'Kaca', bg: 'linear-gradient(135deg,#7f99a8,#1f7a57)', accent: '#C6FF3D', text: '#fff' },
+  { v: 'neon', label: 'Neon', bg: '#060814', accent: '#00E5FF', text: '#fff' },
+];
+
+function VideoStyleEditor({ vs, setV, sport }: { vs: ExportStyle; setV: (p: Partial<ExportStyle>) => void; sport: Sport }) {
+  const ball = sport === 'padel' ? 'bola' : 'kok';
+  return (
+    <div className="stack an-style">
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Gaya tampilan</span>
+        <div className="an-themes">
+          {THEME_OPTS.map((t) => (
+            <button key={t.v} type="button" className={vs.theme === t.v ? 'on' : ''} onClick={() => setV({ theme: t.v })} aria-pressed={vs.theme === t.v}>
+              <span className="an-swatch" style={{ background: t.bg }}>
+                <i style={{ background: t.accent }} />
+                <em style={{ background: t.text }} />
+              </span>
+              <b>{t.label}</b>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Animasi pemain</span>
+        <OptChips
+          value={vs.player}
+          onChange={(v) => setV({ player: v })}
+          options={[
+            { v: 'modern', label: 'Modern' },
+            { v: 'ring', label: 'Cincin' },
+            { v: 'spotlight', label: 'Sorotan' },
+            { v: 'arrow', label: 'Panah' },
+            { v: 'off', label: 'Mati' },
+          ]}
+        />
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Animasi {ball}</span>
+        <OptChips
+          value={vs.ball}
+          onChange={(v) => setV({ ball: v })}
+          options={[
+            { v: 'tail', label: 'Ekor' },
+            { v: 'comet', label: 'Komet' },
+            { v: 'dots', label: 'Titik' },
+            { v: 'off', label: 'Mati' },
+          ]}
+        />
+      </div>
+      <Switch on={vs.bounce} onChange={(v) => setV({ bounce: v })} label={`Efek ${ball} memantul`} hint={`Riak di lantai saat ${ball} jatuh${sport === 'padel' ? ' atau memantul di lantai/kaca' : ''}`} />
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Efek raket kena {ball}</span>
+        <OptChips
+          value={vs.hitFx}
+          onChange={(v) => setV({ hitFx: v })}
+          options={[
+            { v: 'flash', label: 'Kilatan' },
+            { v: 'burst', label: 'Ledakan' },
+            { v: 'off', label: 'Mati' },
+          ]}
+        />
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Label jenis pukulan</span>
+        <Seg
+          value={vs.shotPos}
+          onChange={(v) => setV({ shotPos: v })}
+          options={[
+            { v: 'panel', label: 'Di atas (panel)' },
+            { v: 'video', label: 'Di dalam video' },
+          ]}
+        />
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <span className="label">Bahasa di video</span>
+        <Seg
+          value={vs.lang}
+          onChange={(v) => setV({ lang: v })}
+          options={[
+            { v: 'id', label: 'Indonesia' },
+            { v: 'en', label: 'English' },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Pratinjau satu frame video hasil dengan gaya terpilih (langsung berubah saat pengaturan diganti). */
+function StylePreview({ src, r, layout, showKcal }: { src: string; r: Result; layout: 'portrait' | 'landscape'; showKcal: boolean }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const t0 = r.frames[0]?.t ?? r.start;
+  const t1 = r.frames[r.frames.length - 1]?.t ?? t0;
+  const [t, setT] = useState(() => Math.min(t1, (r.hits[0]?.t ?? t0 + 0.5) + 0.12));
+  const [ready, setReady] = useState(false);
+
+  const draw = useCallback(() => {
+    const v = video.current;
+    const c = canvas.current;
+    if (!v || !c || !ready) return;
+    const W = layout === 'portrait' ? 720 : 1280;
+    const H = layout === 'portrait' ? 1280 : 720;
+    if (c.width !== W) c.width = W;
+    if (c.height !== H) c.height = H;
+    drawExportFrame(c.getContext('2d')!, v, r, frameAt(r, t), layout, showKcal, t);
+  }, [r, layout, showKcal, t, ready]);
+
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    let alive = true;
+    (async () => {
+      if (v.readyState < 2) await new Promise((res) => v.addEventListener('loadeddata', res, { once: true }));
+      await seek(v, t);
+      if (alive) setReady(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [t]);
+  useEffect(() => {
+    draw();
+  }, [draw]);
+
+  const nextHit = r.hits.find((h) => h.t > t + 0.2) ?? r.hits[0];
+  return (
+    <div className="stack an-preview-wrap" style={{ gap: 8 }}>
+      <canvas ref={canvas} className={`an-style-preview ${layout}`} />
+      <video ref={video} src={src} muted playsInline preload="auto" className="an-hidden-video" />
+      <input type="range" min={t0} max={t1} step={1 / 15} value={t} onChange={(e) => setT(Number(e.target.value))} aria-label="Waktu pratinjau" />
+      <div className="row-between tiny mute">
+        <span>Pratinjau di {mmss(t, true)}</span>
+        {nextHit && (
+          <button type="button" className="btn btn-ghost btn-xs" onClick={() => setT(Math.min(t1, nextHit.t + 0.12))}>
+            Ke pukulan berikutnya
+          </button>
+        )}
+      </div>
     </div>
   );
 }

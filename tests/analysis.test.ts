@@ -93,8 +93,13 @@ function rally(nHits: number, sport: 'badminton' | 'padel' = 'badminton') {
       const b = hand(to);
       // Lengkung: kok naik dulu (y gambar mengecil) lalu turun.
       let s = { x: a.x + (b.x - a.x) * r, y: a.y + (b.y - a.y) * r - Math.sin(Math.PI * r) * 0.12 };
-      // Padel: bola memantul di lantai pada 70% lintasan (belokan tajam jauh dari tangan).
-      if (sport === 'padel' && r > 0.6 && r < 0.8) s = { x: s.x, y: s.y + (0.7 - Math.abs(r - 0.7)) * 0.15 };
+      if (sport === 'padel') {
+        // Padel: bola turun ke lantai di 70% jarak (titik lantai di antara kedua pemain), lalu naik ke penerima.
+        const fromC = k % 2 === 0 ? nearPos(f) : farPos(f);
+        const toC = k % 2 === 0 ? farPos(f) : nearPos(f);
+        const floor = map({ x: fromC.x + (toC.x - fromC.x) * 0.7, y: fromC.y + (toC.y - fromC.y) * 0.7 });
+        s = r < 0.7 ? { x: a.x + (floor.x - a.x) * (r / 0.7), y: a.y + (floor.y - a.y) * (r / 0.7) } : { x: floor.x + (b.x - floor.x) * ((r - 0.7) / 0.3), y: floor.y + (b.y - floor.y) * ((r - 0.7) / 0.3) };
+      }
       blobs.push({ x: s.x, y: s.y, area: 6 });
       // Tangan pemukul tepat di kok saat memukul.
       if (f % per === 0) from.wristR = { ...s };
@@ -249,4 +254,27 @@ test('titik kunci di tengah video memperbaiki identitas yang tertukar', () => {
     assert.ok(Math.abs(tr[0].frames[f]!.court.x - A(f).x) < 0.3, `slot 0 = A di frame ${f}`);
     assert.ok(Math.abs(tr[1].frames[f]!.court.x - B(f).x) < 0.3, `slot 1 = B di frame ${f}`);
   }
+});
+
+test('pantulan: padel memantul di lantai di antara pukulan; akhir reli tercatat', async () => {
+  const { detectBounces } = await import('../src/analysis/core.ts');
+  const n = 6;
+  const { frames, per } = rally(n, 'padel');
+  const tracks = trackPlayers(frames, padelCal, 1);
+  const shuttle = trackShuttle(frames, tracks, padelCal.aspect);
+  const hits = detectHits(frames, tracks, shuttle, 'padel', 1);
+  const b = detectBounces(frames, shuttle, hits, 'padel');
+  const mid = b.filter((x) => hits.some((h, i) => hits[i + 1] && x.frame > h.frame && x.frame < hits[i + 1].frame));
+  assert.ok(mid.length >= hits.length - 2, `pantulan antar pukulan ${mid.length}`);
+  for (const x of mid) {
+    const r = (x.frame % per) / per;
+    assert.ok(r > 0.5 && r < 0.9, `pantulan di ±70% lintasan (r=${r.toFixed(2)})`);
+  }
+  // Badminton: tidak ada pantulan di tengah reli, hanya titik jatuh di akhir.
+  const bf = rally(n, 'badminton');
+  const bt = trackPlayers(bf.frames, cal, 1);
+  const bs = trackShuttle(bf.frames, bt, cal.aspect);
+  const bh = detectHits(bf.frames, bt, bs, 'badminton', 1);
+  const bb = detectBounces(bf.frames, bs, bh, 'badminton');
+  assert.ok(bb.length <= 1, `badminton hanya titik jatuh akhir reli (${bb.length})`);
 });

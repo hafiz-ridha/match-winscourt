@@ -2155,3 +2155,91 @@ input[type='range'] {
   text-decoration: underline;
   cursor: pointer;
 }
+/* ---------- gaya video (kustomisasi) ---------- */
+.an-style {
+  gap: 16px;
+}
+.an-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.an-chips button {
+  border: 1.5px solid var(--hairline);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 13px;
+  font: 600 13px/1 var(--font);
+  cursor: pointer;
+}
+.an-chips button.on {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--lime);
+}
+.an-themes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.an-themes button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border: 1.5px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.an-themes button.on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--lime);
+}
+.an-swatch {
+  position: relative;
+  width: 100%;
+  max-width: 64px;
+  aspect-ratio: 4 / 3;
+  border-radius: 9px;
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+.an-swatch i {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 40%;
+  height: 7px;
+  border-radius: 4px;
+}
+.an-swatch em {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: 60%;
+  height: 5px;
+  border-radius: 3px;
+  opacity: 0.7;
+}
+.an-style-preview {
+  display: block;
+  margin: 0 auto;
+  border-radius: 14px;
+  background: #0e1714;
+  max-width: 100%;
+  box-shadow: var(--shadow);
+}
+.an-style-preview.portrait {
+  width: 240px;
+  max-height: 62vh;
+  height: auto;
+}
+.an-style-preview.landscape {
+  width: 100%;
+  height: auto;
+}

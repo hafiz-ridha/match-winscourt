@@ -828,3 +828,58 @@ export function swapSlots(tracks: Track[], hits: Hit[], a: number, b: number) {
   [tracks[a], tracks[b]] = [tracks[b], tracks[a]];
   for (const h of hits) h.player = h.player === a ? b : h.player === b ? a : h.player;
 }
+
+/* ---------------- titik jatuh & pantulan kok/bola ---------------- */
+
+export interface Bounce {
+  frame: number;
+  t: number;
+  p: Pt;
+}
+
+/**
+ * Titik kok/bola jatuh (ujung lintasan setelah pukulan terakhir reli) dan, untuk padel, pantulan di antara
+ * dua pukulan: bola turun lalu naik lagi di gambar (lantai) atau berbalik arah samping (dinding kaca).
+ */
+export function detectBounces(frames: { t: number }[], shuttle: (Pt | null)[], hits: Hit[], sport: Sport): Bounce[] {
+  if (!frames.length) return [];
+  const dt = frameDt(frames);
+  const gap = Math.round(RALLY_GAP[sport] / dt);
+  const out: Bounce[] = [];
+  const sorted = [...hits].sort((a, b) => a.frame - b.frame);
+  sorted.forEach((h, i) => {
+    const next = sorted[i + 1];
+    if (!next || next.frame - h.frame > gap) {
+      // Akhir reli: posisi terakhir lintasan yang tersambung setelah pukulan.
+      let last = -1;
+      let run = 0;
+      for (let k = h.frame + 1; k <= Math.min(shuttle.length - 1, h.frame + gap); k++) {
+        if (shuttle[k]) {
+          last = k;
+          run++;
+        } else if (last >= 0 && k - last > 3) break;
+      }
+      if (last > h.frame + 2 && run >= 3) out.push({ frame: last, t: frames[last].t, p: shuttle[last]! });
+      return;
+    }
+    if (sport !== 'padel') return;
+    // Pantulan = patahan tajam lintasan (arah/kecepatan berubah mendadak dalam 1 langkah), bukan
+    // lengkungan halus seperti puncak lob. Ambil patahan paling tajam di antara dua pukulan
+    // (dan satu lagi bila sangat jelas, mis. lantai lalu dinding kaca).
+    const kinks: { k: number; d: number }[] = [];
+    for (let k = h.frame + 3; k < next.frame - 2; k++) {
+      const a = shuttle[k - 2];
+      const b = shuttle[k];
+      const c = shuttle[k + 2];
+      if (!a || !b || !c) continue;
+      const v1 = { x: b.x - a.x, y: b.y - a.y };
+      const v2 = { x: c.x - b.x, y: c.y - b.y };
+      const m = Math.max(Math.hypot(v1.x, v1.y), Math.hypot(v2.x, v2.y));
+      if (m < 0.008) continue;
+      kinks.push({ k, d: Math.hypot(v2.x - v1.x, v2.y - v1.y) / m });
+    }
+    const peaks = kinks.filter((x, i) => x.d > 0.45 && (kinks[i - 1]?.d ?? 0) <= x.d && (kinks[i + 1]?.d ?? 0) < x.d).sort((p, q) => q.d - p.d);
+    peaks.slice(0, peaks[1] && peaks[1].d > 0.8 ? 2 : 1).forEach(({ k }) => out.push({ frame: k, t: frames[k].t, p: shuttle[k]! }));
+  });
+  return out;
+}
