@@ -2,7 +2,11 @@ import { groupTables } from '../../../shared/engine.ts';
 import { formatInfo } from '../../../shared/formats.ts';
 import { clubTotals, playerStandings, teamStandings, unitsOf } from '../../../shared/standings.ts';
 import type { Session, Standing } from '../../../shared/types.ts';
-import { Lock, Trophy } from '../../components/Icons.tsx';
+import { useEffect, useState } from 'react';
+import { Download, Lock, Share, Trophy } from '../../components/Icons.tsx';
+import { Medal } from '../../components/Medal.tsx';
+import { useToast } from '../../components/ui.tsx';
+import { drawRankImage, rankFileName } from './rankImage.ts';
 import type { Ctx } from './helpers.ts';
 
 export function StandingsTable({ list, mine, showComp, title }: { list: Standing[]; mine?: string | null; showComp: boolean; title?: string }) {
@@ -26,7 +30,7 @@ export function StandingsTable({ list, mine, showComp, title }: { list: Standing
         <tbody>
           {list.map((x, i) => (
             <tr key={x.id} className={`${i === 0 && x.played > 0 ? 'top1' : ''}${x.id === mine ? ' mine' : ''}`}>
-              <td className="rank">{i + 1}</td>
+              <td className="rank">{i < 3 && x.played > 0 ? <Medal rank={(i + 1) as 1 | 2 | 3} /> : i + 1}</td>
               <td>
                 <span className="truncate" style={{ display: 'inline-block', maxWidth: 130, verticalAlign: 'bottom' }}>
                   {x.name}
@@ -45,6 +49,68 @@ export function StandingsTable({ list, mine, showComp, title }: { list: Standing
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/**
+ * Tombol bagikan gambar peringkat. Gambar dibuat lebih dulu di latar, supaya saat tombol diketuk
+ * menu share langsung terbuka (iPhone hanya mengizinkan share tepat setelah ketukan).
+ */
+function ShareRank({ s, list, title }: { s: Session; list: Standing[]; title: string }) {
+  const toast = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const sig = s.name + JSON.stringify(list.map((x) => [x.name, x.played, x.won, x.draw, x.lost, x.total]));
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        await (document as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready;
+      } catch {
+        /* lanjut */
+      }
+      const c = drawRankImage(s, list, title);
+      c.toBlob((b) => alive && b && setFile(new File([b], rankFileName(s), { type: 'image/png' })), 'image/png');
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig, title]);
+
+  const download = () => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+  const share = async () => {
+    if (!file) return;
+    const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
+    if (nav.canShare?.({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: `Peringkat ${s.name}`, text: `Peringkat ${s.name} · match.wins-court.com` });
+      } catch {
+        /* dibatalkan */
+      }
+    } else {
+      download();
+      toast('Gambar peringkat diunduh');
+    }
+  };
+  return (
+    <div className="row">
+      <button className="btn btn-dark grow" disabled={!file} onClick={share}>
+        <Share size={18} /> Bagikan peringkat
+      </button>
+      <button className="btn btn-ghost" disabled={!file} onClick={download} aria-label="Unduh gambar peringkat" title="Unduh gambar">
+        <Download size={18} />
+      </button>
     </div>
   );
 }
@@ -94,8 +160,10 @@ export function RankTab({ ctx }: { ctx: Ctx }) {
     );
   const players = playerStandings(s);
   const clubs = info.clubs ? clubTotals(s) : null;
+  const shareTeams = info.fixedPairs && s.teamSize === 2;
   return (
     <div className="stack-lg">
+      <ShareRank s={s} list={shareTeams ? teamStandings(s) : players} title={shareTeams ? 'Peringkat tim' : ''} />
       {s.settings.hideLeaderboard && isHost && <div className="banner banner-warn">Peringkat disembunyikan dari pemain sampai sesi selesai.</div>}
       {clubs && (
         <div className="card hero stack">
