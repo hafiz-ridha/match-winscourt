@@ -1,5 +1,5 @@
 /** Gambar overlay analisis (nama pemain, jejak kok, label pukulan, peta mini) dan ekspor video. */
-import { calibMaps, detectBounces, shotSpeeds, type ShotSpeed, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
+import { calibMaps, RALLY_GAP, detectBounces, shotSpeeds, type ShotSpeed, type Bounce, courtLines, COURTS, frameDt, shotLabel, smoothCourt, summarize, type Anchor, type Calib, type FrameObs, type Hit, type Pt, type Sport, type Track } from './core.ts';
 
 export const PLAYER_COLORS = ['#C6FF3D', '#2BC58A', '#38BDF8', '#FB923C'];
 const INK = '#0E1714';
@@ -475,19 +475,20 @@ function drawBall(ctx: CanvasRenderingContext2D, r: Result, f0: number, frac: nu
   const span = fx === 'comet' ? 15 : fx === 'tail' ? 10 : 8;
   let lastHit = -Infinity;
   for (const h of r.hits) if (h.frame <= f0 && h.frame > lastHit) lastHit = h.frame;
+  const path = ballPath(r);
   const pts: Pt[] = [];
   let gap = 0;
   for (let k = 0; k <= span; k++) {
     const fi = f0 - k;
     if (fi < 0 || fi < lastHit) break;
-    const s = r.shuttle[fi];
+    const s = path[fi];
     if (s) {
       pts.unshift(s);
       gap = 0;
     } else if (++gap > 4) break;
   }
-  const cur = r.shuttle[f0];
-  const nextS = r.shuttle[f0 + 1];
+  const cur = path[f0];
+  const nextS = path[f0 + 1];
   if (cur && nextS) pts.push({ x: cur.x + (nextS.x - cur.x) * frac, y: cur.y + (nextS.y - cur.y) * frac });
   if (!pts.length) return;
   const acc = TH.accent;
@@ -585,6 +586,104 @@ function bouncesOf(r: Result): Bounce[] {
     bounceCache.set(r.hits, b);
   }
   return b;
+}
+
+/* ---------------- jalur bola gabungan (untuk animasi) ---------------- */
+
+const pathCache = new WeakMap<Hit[], WeakMap<(Pt | null)[], (Pt | null)[]>>();
+
+/** Titik tangan pemukul saat memukul: pergelangan yang lebih tinggi, atau kepala bila tidak ada. */
+function hitPoint(r: Result, h: Hit): Pt | null {
+  const s = r.shuttle[h.frame];
+  if (s) return s;
+  const t = r.tracks[h.player];
+  for (let k = 0; k <= 4; k++) {
+    const f = t?.frames[h.frame - k] ?? t?.frames[h.frame + k];
+    if (f) return f.wristL.y < f.wristR.y ? f.wristL : f.wristR;
+  }
+  return null;
+}
+
+/**
+ * Jalur kok/bola per frame untuk animasi: deteksi pelacak dipakai bila ada; celah di antaranya diisi
+ * jalur perkiraan yang ditambatkan ke titik pukulan (tangan pemukul), pukulan berikutnya, dan titik
+ * jatuh/pantul. Di rekaman asli kok kecil & kabur sehingga sering tak terdeteksi — tanpa ini ekor
+ * komet/ekor hampir tidak pernah muncul.
+ */
+export function ballPath(r: Result): (Pt | null)[] {
+  let byShuttle = pathCache.get(r.hits);
+  if (!byShuttle) {
+    byShuttle = new WeakMap();
+    pathCache.set(r.hits, byShuttle);
+  }
+  const hit = byShuttle.get(r.shuttle);
+  if (hit) return hit;
+
+  const n = r.frames.length;
+  const out: (Pt | null)[] = r.shuttle.slice(0, n);
+  while (out.length < n) out.push(null);
+  const dt = frameDt(r.frames);
+  const rallyGap = Math.round(RALLY_GAP[r.sport] / dt);
+  const hits = [...r.hits].sort((a, b) => a.frame - b.frame);
+  const bounces = bouncesOf(r);
+
+  hits.forEach((h, i) => {
+    const start = hitPoint(r, h);
+    if (!start) return;
+    const next = hits[i + 1] && hits[i + 1].frame - h.frame <= rallyGap ? hits[i + 1] : null;
+    // Ujung segmen: pukulan berikutnya, atau titik jatuh/pantul pertama setelah pukulan ini.
+    let endF = -1;
+    let end: Pt | null = null;
+    if (next) {
+      end = hitPoint(r, next);
+      endF = next.frame;
+    }
+    const b = bounces.find((x) => x.frame > h.frame && (!next || x.frame < next.frame));
+    if (!end && b) {
+      end = b.p;
+      endF = b.frame;
+    }
+    if (!end || endF <= h.frame) {
+      // Tanpa ujung: sambung saja celah pendek di antara deteksi yang ada.
+      return;
+    }
+    // Titik tambat segmen ini: awal, deteksi nyata di antaranya, (pantulan), akhir.
+    const keys: { f: number; p: Pt }[] = [{ f: h.frame, p: start }];
+    for (let f = h.frame + 1; f < endF; f++) if (r.shuttle[f]) keys.push({ f, p: r.shuttle[f]! });
+    if (b && b.frame < endF && !keys.some((k) => k.f === b.frame)) keys.push({ f: b.frame, p: b.p });
+    keys.push({ f: endF, p: end });
+    keys.sort((x, y) => x.f - y.f);
+    for (let k = 1; k < keys.length; k++) {
+      const a = keys[k - 1];
+      const c = keys[k];
+      const len = c.f - a.f;
+      if (len <= 1) continue;
+      // Celah panjang tanpa deteksi: lengkungan ke atas (lambungan) sebanding jarak; celah pendek: lurus.
+      const arc = len >= 6 ? Math.min(0.22, Math.hypot(c.p.x - a.p.x, c.p.y - a.p.y) * 0.35) : 0;
+      for (let f = a.f + 1; f < c.f; f++) {
+        if (out[f]) continue;
+        const q = (f - a.f) / len;
+        out[f] = { x: a.p.x + (c.p.x - a.p.x) * q, y: a.p.y + (c.p.y - a.p.y) * q - Math.sin(Math.PI * q) * arc };
+      }
+    }
+    if (!out[h.frame]) out[h.frame] = start;
+  });
+  // Celah pendek (≤ 6 frame) di antara deteksi yang tidak tertambat pukulan: sambung lurus.
+  let last = -1;
+  for (let f = 0; f < n; f++) {
+    if (!out[f]) continue;
+    if (last >= 0 && f - last > 1 && f - last <= 6) {
+      const a = out[last]!;
+      const c = out[f]!;
+      for (let g = last + 1; g < f; g++) {
+        const q = (g - last) / (f - last);
+        out[g] = { x: a.x + (c.x - a.x) * q, y: a.y + (c.y - a.y) * q };
+      }
+    }
+    last = f;
+  }
+  byShuttle.set(r.shuttle, out);
+  return out;
 }
 
 /** Riak di lantai saat kok/bola jatuh atau memantul (0,9 dtk). */
