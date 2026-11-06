@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import './styles.css';
 import { Loader, ToastProvider } from './components/ui.tsx';
+import { initLayout } from './layout.ts';
 import { Home } from './pages/Home.tsx';
 import { CreateSession } from './pages/CreateSession.tsx';
 import { SessionPage } from './pages/SessionPage.tsx';
@@ -25,6 +26,9 @@ if (location.search.includes('_r=')) {
   u.searchParams.delete('_r');
   history.replaceState(null, '', u.pathname + u.search + u.hash);
 }
+
+// Mode tampilan (HP / desktop) sebelum halaman pertama digambar.
+initLayout();
 
 function NotFound() {
   return (

@@ -137,8 +137,9 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
         </div>
       </div>
 
+      <div className="lay2 tall2">
       {manual ? (
-        <div className="card hero stack rise">
+        <div className="card hero stack rise c1">
           <div className="row-between">
             <span className="eyebrow">Sesi manual</span>
             <span className="chip chip-outline tiny">Tanpa booking Wins Court</span>
@@ -181,7 +182,7 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
           </p>
         </div>
       ) : (
-      <div className="card hero stack rise" style={{ gap: 10 }}>
+      <div className="card hero stack rise c1" style={{ gap: 10 }}>
         <div className="row-between">
           <SportChip sport={booking.sport} />
           <span className="chip chip-outline tiny">
@@ -205,7 +206,7 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
       </div>
       )}
 
-      <div className="card stack rise" style={{ animationDelay: '60ms' }}>
+      <div className="card stack rise c2 r12" style={{ animationDelay: '60ms' }}>
         <label className="field">
           <span className="label">Nama sesi</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contoh: Mabar Kamis Malam" maxLength={60} />
@@ -268,7 +269,7 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
         </button>
       </div>
 
-      <div className="card card-surface stack small">
+      <div className="card card-surface stack small c1">
         <div className="eyebrow">Setelah ini</div>
         <div className="row" style={{ alignItems: 'flex-start' }}>
           <b className="num">1</b>
@@ -288,6 +289,7 @@ function Form({ initial, manual }: { initial: Booking; manual: boolean }) {
             <b>Jalankan & catat skor.</b> Host bisa menimpa susunan kapan saja.
           </span>
         </div>
+      </div>
       </div>
     </div>
   );

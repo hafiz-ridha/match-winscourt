@@ -130,7 +130,6 @@ function LoginGate({ onDone }: { onDone: () => void }) {
           <Back size={20} />
         </Link>
         <Brand sub="AI Match Analysis" />
-        <span className="beta-tag">BETA</span>
       </div>
       <LoginCard
         onDone={onDone}
@@ -216,9 +215,6 @@ function AnalysisApp() {
           <Back size={20} />
         </Link>
         <Brand sub="AI Match Analysis" />
-        <span className="beta-tag" title="Fitur percobaan: hasil AI perlu diperiksa">
-          BETA
-        </span>
       </div>
 
       <div className="an-head">
@@ -365,8 +361,8 @@ function SetupStep({
   if (remain <= 121) lenOptions.push({ v: ALL_CLIP, label: `Semua · ${mmss(remain)}` });
   const lenValue = remain <= 121 && clip.len >= remain - 1 ? ALL_CLIP : Math.min(clip.len, 120);
   return (
-    <div className="stack-lg">
-      <div className="card stack">
+    <div className="lay2 tall3">
+      <div className="card stack c1">
         <div className="row-between">
           <h3>Pertandingan</h3>
           {locked && <span className="chip chip-lime tiny">Dari match sesi</span>}
@@ -428,7 +424,7 @@ function SetupStep({
         </div>
       </div>
 
-      <div className="card stack">
+      <div className="card stack c2 r13">
         <h3>Pilih video</h3>
         <label className="an-drop">
           <input
@@ -491,7 +487,7 @@ function SetupStep({
         )}
       </div>
 
-      <div className="card card-surface stack" style={{ gap: 8 }}>
+      <div className="card card-surface stack c1" style={{ gap: 8 }}>
         <div className="row" style={{ gap: 8 }}>
           <Info size={18} />
           <b className="small">Tips rekam supaya akurat</b>
@@ -514,7 +510,7 @@ function SetupStep({
         </ul>
       </div>
 
-      <button className="btn btn-primary btn-lg btn-block" disabled={!src || !meta || meta.duration < 2} onClick={onNext}>
+      <button className="btn btn-primary btn-lg btn-block c1" disabled={!src || !meta || meta.duration < 2} onClick={onNext}>
         Lanjut: tandai lapangan
       </button>
     </div>
@@ -690,8 +686,8 @@ function CalibStep({
   const farNames = (nearIsA ? teamB : teamA).filter(Boolean).join(' & ') || (nearIsA ? 'Tim B' : 'Tim A');
 
   return (
-    <div className="stack-lg">
-      <div className="card stack">
+    <div className="lay2 tall3 main-side">
+      <div className="card stack c1 r13">
         <div>
           <h3>{mode === 'court' ? 'Tandai lapangan' : 'Kunci posisi pemain'}</h3>
           <p className="small mute">
@@ -812,7 +808,7 @@ function CalibStep({
         )}
       </div>
 
-      <div className="card stack">
+      <div className="card stack c2">
         <h3>Siapa di dekat kamera?</h3>
         <Seg
           value={nearIsA ? 'a' : 'b'}
@@ -834,7 +830,7 @@ function CalibStep({
         </div>
       </div>
 
-      <div className="card stack" style={{ gap: 8 }}>
+      <div className="card stack c2" style={{ gap: 8 }}>
         <Switch
           on={hq}
           onChange={setHq}
@@ -850,7 +846,7 @@ function CalibStep({
         )}
       </div>
 
-      <div className="row">
+      <div className="row c2">
         <button className="btn btn-ghost" onClick={onBack}>
           Kembali
         </button>
@@ -982,7 +978,7 @@ function ProcessStep({
   }, []);
 
   return (
-    <div className="stack-lg">
+    <div className="stack-lg an-narrow">
       <div className="card stack">
         <h3>{error ? 'Gagal memproses' : 'Sedang menganalisis'}</h3>
         {error ? (
@@ -1248,7 +1244,8 @@ function ReviewStep({
 
   return (
     <div className="stack-lg">
-      <div className="card stack">
+      <div className="card lay2 tight tall2 main-side">
+        <div className="stack c2">
         <div className="row-between">
           <h3>Periksa pukulan</h3>
           <span className="chip tiny">{r.hits.length} pukulan</span>
@@ -1257,6 +1254,8 @@ function ReviewStep({
         <p className="small mute">
           Geser garis waktu. Ketuk tanda bulat untuk mengubah pemukul atau jenis pukulan. Ada pukulan terlewat? Berhenti di saat raket kena {r.sport === 'padel' ? 'bola' : 'kok'}, tekan <b>+</b>. Salah deteksi? Pilih lalu tekan <b>−</b>.
         </p>
+        </div>
+        <div className="stack c1 r12">
         <div className="an-player" ref={playerBox} onPointerMove={(e) => pdrag && setPdrag({ slot: pdrag.slot, p: pointer(e) ?? pdrag.p })} onPointerUp={commitPos}>
           <video ref={video} src={src} playsInline muted preload="auto" onClick={() => (video.current?.paused ? video.current.play() : video.current?.pause())} />
           <canvas ref={canvas} />
@@ -1387,6 +1386,8 @@ function ReviewStep({
           </button>
         </div>
         <div className="center tiny mute num">{mmss(t, true)}</div>
+        </div>
+        <div className="stack c2">
 
         {selected ? (
           <div className="card card-surface stack" style={{ gap: 10 }}>
@@ -1457,6 +1458,7 @@ function ReviewStep({
           </div>
         )}
         <div className="tiny mute">Label nama tertukar? Tekan tukar supaya posisi & pukulan pindah ke pemain yang benar.</div>
+        </div>
       </div>
 
       <div className="row">
@@ -1600,8 +1602,8 @@ function ResultStep({
   };
 
   return (
-    <div className="stack-lg">
-      <div className="card card-dark stack">
+    <div className="stack-lg wcols">
+      <div className="card card-dark stack full">
         <div className="row-between">
           <div>
             <div className="eyebrow" style={{ color: 'var(--lime)' }}>
@@ -1611,7 +1613,6 @@ function ResultStep({
               {mmss(st.duration)} video · {r.hits.length} pukulan · {st.rallies} reli
             </div>
           </div>
-          <span className="beta-tag dark">BETA</span>
         </div>
         <div className="an-kpis">
           <div>
@@ -1636,13 +1637,13 @@ function ResultStep({
       </div>
 
       {st.players.some((p) => p.coverage < 40) && (
-        <div className="banner banner-warn small">
+        <div className="full banner banner-warn small">
           Sebagian pemain jarang terlacak, jadi jarak & kalori bisa terlalu kecil. Pastikan seluruh badan pemain terlihat, kamera diam, dan keempat titik
           lapangan pas.
         </div>
       )}
 
-      <div className="an-players">
+      <div className="an-players full">
         {st.players.map((p, i) => (
           <div key={i} className="card stack" style={{ gap: 10 }}>
             <div className="row-between">
@@ -1802,7 +1803,7 @@ function ResultStep({
         )}
       </div>
 
-      <div className="row">
+      <div className="row full">
         <button className="btn btn-ghost" onClick={onBack}>
           Periksa lagi
         </button>
@@ -1816,7 +1817,7 @@ function ResultStep({
           </Link>
         )}
       </div>
-      <p className="tiny whisper center">
+      <p className="tiny whisper center full">
         Beta: angka adalah perkiraan mesin dari video dan bisa meleset, terutama bila pemain tertutup atau kamera bergerak.
       </p>
     </div>

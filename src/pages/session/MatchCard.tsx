@@ -111,7 +111,7 @@ export function MatchCard({ ctx, m, compact, roundN, blockedBy = [] }: { ctx: Ct
           )}
           {(m.status === 'done' || m.status === 'live') && (
             <Link className="btn btn-ghost btn-xs" to={`/analisis?s=${s.slug}&m=${m.id}`} title="AI Match Analysis untuk match ini (beta)">
-              <Court size={14} /> AI Match Analysis <span className="beta-tag">BETA</span>
+              <Court size={14} /> AI Match Analysis
             </Link>
           )}
         </div>

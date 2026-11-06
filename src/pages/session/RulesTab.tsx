@@ -39,7 +39,7 @@ export function RulesTab({ ctx }: { ctx: Ctx }) {
   }
 
   return (
-    <div className="stack-lg">
+    <div className="stack-lg wcols">
       <div className="card hero stack">
         <div className="row-between">
           <SportChip sport={s.sport} />

@@ -85,12 +85,13 @@ export function Join() {
           </span>
         </div>
       </div>
-      <h1>
+      <div className="lay2 tall3">
+      <h1 className="c1">
         Kamu yang <span style={{ color: 'var(--lime-deep)' }}>mana?</span>
       </h1>
 
       {me && (
-        <div className="banner banner-lime row-between">
+        <div className="banner banner-lime row-between c1">
           <span>
             Kamu sudah masuk sebagai <b>{me.name}</b>.
           </span>
@@ -100,6 +101,7 @@ export function Join() {
         </div>
       )}
 
+      <div className="stack-lg c2 r13">
       <Seg
         value={tab}
         onChange={setTab}
@@ -214,9 +216,12 @@ export function Join() {
         </form>
       )}
 
-      <div className="card card-surface stack" style={{ gap: 6 }}>
+      </div>
+
+      <div className="card card-surface stack c1" style={{ gap: 6 }}>
         <SportChip sport={s.sport} />
         <CourtArt sport={s.sport} />
+      </div>
       </div>
 
       <Sheet open={!!claim} onClose={() => setClaim(null)} title={claim ? `Hai, ${claim.name}!` : ''}>

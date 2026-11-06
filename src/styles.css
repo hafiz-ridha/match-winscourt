@@ -2243,3 +2243,287 @@ input[type='range'] {
   width: 100%;
   height: auto;
 }
+
+/* =====================================================================
+ * Mode tampilan: tombol di samping logo (bawaan = tampilan HP, tidak berubah)
+ * ===================================================================== */
+.brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.layout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--mute);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: none;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.layout-btn:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+.layout-btn.on {
+  background: var(--text);
+  color: var(--lime);
+  border-color: var(--text);
+}
+/* HP sempit: ikon saja supaya topbar tidak sesak. */
+@media (max-width: 400px) {
+  .layout-btn {
+    padding: 0;
+    width: 30px;
+    justify-content: center;
+  }
+  .layout-btn-l {
+    display: none;
+  }
+}
+/* Susunan kolom (di tampilan HP tetap satu kolom seperti biasa). */
+.lay2 {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.lay2 > .col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* ---------- mode desktop / landscape ---------- */
+:root[data-layout='wide'] body {
+  background-image:
+    radial-gradient(900px 600px at 30% 200px, rgba(198, 255, 61, 0.15), rgba(198, 255, 61, 0) 70%),
+    radial-gradient(800px 700px at 100% 700px, rgba(43, 197, 138, 0.09), rgba(43, 197, 138, 0) 70%);
+}
+:root[data-layout='wide'] .app {
+  max-width: 1120px;
+  padding: 14px 32px 120px;
+}
+:root[data-layout='wide'] h1 {
+  font-size: 36px;
+}
+/* Dua kolom berdampingan; kolom kiri bisa menempel saat halaman digulir. */
+:root[data-layout='wide'] .lay2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px 28px;
+  align-items: start;
+}
+:root[data-layout='wide'] .lay2.main-side {
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);
+}
+:root[data-layout='wide'] .lay2 > .full {
+  grid-column: 1 / -1;
+}
+:root[data-layout='wide'] .lay2 > .sticky {
+  position: sticky;
+  top: 16px;
+}
+/* Kumpulan kartu mengalir ke 2 kolom (urutan: turun di kolom kiri, lalu kanan) tanpa celah. */
+:root[data-layout='wide'] .wcols {
+  display: block;
+  columns: 2 340px;
+  column-gap: 24px;
+}
+:root[data-layout='wide'] .wcols > * {
+  break-inside: avoid;
+  margin-bottom: 20px;
+}
+:root[data-layout='wide'] .wcols > .full {
+  column-span: all;
+}
+:root[data-layout='wide'] .wcols > *:last-child {
+  margin-bottom: 0;
+}
+/* Daftar kartu (sesi, booking, lapangan) jadi petak. */
+:root[data-layout='wide'] .wgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+:root[data-layout='wide'] .wgrid > .full {
+  grid-column: 1 / -1;
+}
+/* Navigasi bawah tetap di tempat yang sama, sedikit lebih lebar. */
+:root[data-layout='wide'] .bottomnav {
+  width: min(560px, calc(100% - 24px));
+}
+/* Papan skor wasit: memenuhi layar landscape. */
+:root[data-layout='wide'] .side {
+  min-height: max(320px, calc(100vh - 330px));
+}
+/* AI Match Analysis: video lebih besar. */
+:root[data-layout='wide'] .an-calib canvas {
+  max-height: 72vh;
+}
+:root[data-layout='wide'] .an-proc-preview {
+  max-height: 64vh;
+}
+:root[data-layout='wide'] .an-preview,
+:root[data-layout='wide'] .an-out {
+  max-height: 72vh;
+}
+/* Penempatan per elemen (urutan di HP tetap): c1 = kolom kiri, c2 = kolom kanan, r12 = baris 1–2. */
+:root[data-layout='wide'] .lay2 > .c1 {
+  grid-column: 1;
+}
+:root[data-layout='wide'] .lay2 > .c2 {
+  grid-column: 2;
+}
+:root[data-layout='wide'] .lay2 > .r12 {
+  grid-row: 1 / span 2;
+}
+:root[data-layout='wide'] .lay2 > .r13 {
+  grid-row: 1 / span 3;
+}
+:root[data-layout='wide'] .lay2.tall2 {
+  grid-template-rows: auto 1fr;
+}
+:root[data-layout='wide'] .lay2.tall3 {
+  grid-template-rows: auto auto 1fr;
+}
+/* Kartu dengan isi dua kolom (mis. Periksa pukulan): jarak antar bagian seperti .stack. */
+.lay2.tight {
+  gap: 12px;
+}
+:root[data-layout='wide'] .lay2.tight {
+  gap: 14px 28px;
+}
+:root[data-layout='wide'] .an-narrow {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+:root[data-layout='wide'] .an-player video {
+  max-height: 74vh;
+}
+:root[data-layout='wide'] .an-players {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+/* HP landscape (layar pendek): judul, jarak & navigasi bawah lebih ringkas supaya isi tetap terlihat. */
+@media (max-height: 520px) {
+  :root[data-layout='wide'] .app {
+    padding: 8px 24px 84px;
+  }
+  :root[data-layout='wide'] .topbar {
+    padding: 2px 0 6px;
+  }
+  :root[data-layout='wide'] h1 {
+    font-size: 26px;
+  }
+  :root[data-layout='wide'] .stack-lg,
+  :root[data-layout='wide'] .lay2 {
+    gap: 14px;
+  }
+  :root[data-layout='wide'] .bottomnav {
+    bottom: max(6px, env(safe-area-inset-bottom));
+    padding: 4px;
+    border-radius: 18px;
+  }
+  :root[data-layout='wide'] .bottomnav button,
+  :root[data-layout='wide'] .bottomnav a {
+    min-height: 38px;
+    flex-direction: row;
+    gap: 6px;
+    border-radius: 14px;
+  }
+  :root[data-layout='wide'] .bottomnav svg {
+    width: 17px;
+    height: 17px;
+  }
+  :root[data-layout='wide'] .badge {
+    top: 2px;
+    right: 6px;
+  }
+  /* Papan skor: isi tinggi layar. */
+  :root[data-layout='wide'] .side {
+    min-height: max(220px, calc(100vh - 150px));
+  }
+  :root[data-layout='wide'] .an-calib canvas,
+  :root[data-layout='wide'] .an-player video,
+  :root[data-layout='wide'] .an-preview,
+  :root[data-layout='wide'] .an-out {
+    max-height: 82vh;
+  }
+  :root[data-layout='wide'] .lay2 > .sticky {
+    position: static;
+  }
+}
+/* Angka skor wasit lebih besar mengikuti tinggi layar di mode lebar. */
+:root[data-layout='wide'] .side .bignum {
+  font-size: clamp(84px, 22vh, 200px);
+}
+/* HP kecil, topbar padat (tombol kiri + logo + label kanan): logo sedikit diringkas supaya tetap satu baris. */
+@media (max-width: 400px) {
+  .brand-name {
+    white-space: nowrap;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand-wrap {
+    gap: 6px;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand {
+    gap: 7px;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand-mark svg {
+    width: 18px;
+    height: 18px;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand-name {
+    font-size: 15px;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .brand-sub {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+  }
+  .topbar:has(> .btn, > .chip, > :nth-child(3)) .layout-btn {
+    width: 28px;
+    height: 28px;
+  }
+}
+/*
+ * Tombol mode tampilan selalu di paling kanan topbar: pembungkus logo "dilebur" (display: contents)
+ * sehingga logo & tombol jadi anggota langsung baris topbar, lalu tombol diurutkan terakhir.
+ */
+.topbar {
+  gap: 8px;
+}
+.topbar .brand-wrap {
+  display: contents;
+}
+.topbar > .brand-wrap > .brand {
+  margin-right: auto;
+  min-width: 0;
+}
+.topbar .layout-btn {
+  order: 99;
+}
+.topbar > .btn,
+.topbar > .chip {
+  white-space: nowrap;
+  flex: none;
+}
+@media (max-width: 400px) {
+  .topbar > .btn-sm {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}

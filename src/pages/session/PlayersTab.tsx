@@ -110,7 +110,7 @@ export function PlayersTab({ ctx }: { ctx: Ctx }) {
   }, [s.players]);
 
   return (
-    <div className="stack-lg">
+    <div className="stack-lg wcols">
       {role === 'viewer' && <JoinCta ctx={ctx} />}
       {me && (
         <div className="banner banner-lime">

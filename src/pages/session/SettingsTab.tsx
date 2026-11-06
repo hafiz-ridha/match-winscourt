@@ -50,7 +50,7 @@ export function SettingsTab({ ctx }: { ctx: Ctx }) {
     );
 
   return (
-    <div className="stack-lg">
+    <div className="stack-lg wcols">
       <div className="card card-surface stack small" style={{ gap: 6 }}>
         <div className="row">
           <Lock size={14} /> <b>{s.bookingId.startsWith('MANUAL-') ? 'Sesi manual (tanpa booking Wins Court)' : `Dari booking Wins Court ${s.bookingId}`}</b>

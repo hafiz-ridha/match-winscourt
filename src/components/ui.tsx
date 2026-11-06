@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { levelName } from '../../shared/formats.ts';
 import type { Sport } from '../../shared/types.ts';
 import { Ball, Shuttle } from './Icons.tsx';
+import { isWide, onLayoutChange, setWide } from '../layout.ts';
 
 /* ---------- toast ---------- */
 const ToastCtx = createContext<(msg: string, err?: boolean) => void>(() => {});
@@ -53,6 +54,38 @@ export function useRun() {
 
 /* ---------- brand ---------- */
 export function Brand({ sub = 'Padel & Badminton' }: { sub?: string }) {
+  return (
+    <div className="brand-wrap">
+      <BrandLink sub={sub} />
+      <LayoutToggle />
+    </div>
+  );
+}
+
+/** Tombol mode tampilan: HP (bawaan) ↔ desktop/landscape. */
+export function LayoutToggle() {
+  const [wide, set] = useState(isWide);
+  useEffect(() => onLayoutChange(() => set(isWide())), []);
+  const label = wide ? 'Kembali ke tampilan HP' : 'Mode desktop / landscape';
+  return (
+    <button type="button" className={`layout-btn no-print${wide ? ' on' : ''}`} onClick={() => setWide(!wide)} aria-label={label} title={label} aria-pressed={wide}>
+      {wide ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+          <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+          <path d="M11 18.5h2" />
+        </svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+          <rect x="2.5" y="4" width="19" height="13" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
+      )}
+      <span className="layout-btn-l">{wide ? 'Mode HP' : 'Desktop'}</span>
+    </button>
+  );
+}
+
+function BrandLink({ sub }: { sub: string }) {
   return (
     <Link to="/" className="brand" aria-label="match beranda">
       <span className="brand-mark">

@@ -89,9 +89,9 @@ function Live({ ctx }: { ctx: Ctx }) {
   const meP = s.players.find((p) => p.id === playerId);
 
   return (
-    <div className="stack-lg">
+    <div className="lay2 tall3 main-side">
       {meP && (
-        <div className="banner banner-lime">
+        <div className="banner banner-lime c1">
           <div>
             {meP.status === 'waitlist' ? (
               <>Kamu di waitlist. Tunggu host menyetujui.</>
@@ -119,7 +119,7 @@ function Live({ ctx }: { ctx: Ctx }) {
       )}
 
       {cur ? (
-        <section className="stack">
+        <section className="stack c1">
           <div className="row-between">
             <div>
               <div className="eyebrow">Sekarang</div>
@@ -153,7 +153,7 @@ function Live({ ctx }: { ctx: Ctx }) {
           )}
         </section>
       ) : (
-        <div className="card card-surface stack center">
+        <div className="card card-surface stack center c1">
           <p className="mute small">
             {info.manual
               ? 'Format Custom: susun ronde sendiri.'
@@ -165,7 +165,7 @@ function Live({ ctx }: { ctx: Ctx }) {
       )}
 
       {isHost && (
-        <div className="row wrap">
+        <div className="row wrap c1">
           {!info.bracket && !info.manual && (
             <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(() => ctx.act({ type: 'regenerate' }), 'Ronde mendatang disusun ulang')}>
               <Shuffle size={16} /> Acak ulang
@@ -182,6 +182,7 @@ function Live({ ctx }: { ctx: Ctx }) {
         </div>
       )}
 
+      <div className="stack-lg c2 r13">
       {upcoming.length > 0 ? (
         <section className="stack">
           <div>
@@ -202,6 +203,7 @@ function Live({ ctx }: { ctx: Ctx }) {
       )}
 
       {past.length > 0 && <History s={s} rounds={past} />}
+      </div>
       {isHost && <ManualRound ctx={ctx} open={manual} onClose={() => setManual(false)} />}
     </div>
   );

@@ -182,6 +182,8 @@ function Login({ onDone }: { onDone: () => void }) {
       <div className="topbar">
         <Brand />
       </div>
+      <div className="lay2 main-side">
+      <div className="col sticky">
       <div className="card hero stack rise">
         <span className="eyebrow">Padel & Badminton · Wins Court</span>
         <HeroCourt />
@@ -190,7 +192,9 @@ function Login({ onDone }: { onDone: () => void }) {
         </h1>
         <p className="mute small">Susun pertandingan adil otomatis, catat skor dari HP, dan lihat peringkat live. Gratis, semua fitur.</p>
       </div>
+      </div>
 
+      <div className="col">
       <LoginCard onDone={onDone} />
 
       <form className="card stack rise" style={{ animationDelay: '160ms' }} onSubmit={openLink}>
@@ -232,7 +236,7 @@ function Login({ onDone }: { onDone: () => void }) {
           </span>
           <div className="grow">
             <h3 style={{ color: '#fff' }}>
-              AI Match Analysis <span className="beta-tag dark">BETA</span>
+              AI Match Analysis
             </h3>
             <p className="small" style={{ opacity: 0.75 }}>
               Upload video main: AI hitung pukulan, jarak lari & kalori, lalu jadikan video Reels.
@@ -241,7 +245,8 @@ function Login({ onDone }: { onDone: () => void }) {
           <Arrow size={20} />
         </div>
       </Link>
-
+      </div>
+      </div>
     </div>
   );
 }
@@ -399,16 +404,20 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
     <div className="app stack-lg">
       <div className="topbar">
         <Brand sub="Mode host" />
-        <button className="icon-btn" onClick={onLogout} aria-label="Keluar" title="Keluar">
-          <Logout size={18} />
+      </div>
+
+      <div className="row-between" style={{ alignItems: 'flex-end' }}>
+        <div className="grow">
+          <div className="small mute">Halo,</div>
+          <h1>{me.host.name}</h1>
+        </div>
+        <button className="btn btn-ghost btn-sm" style={{ flex: 'none' }} onClick={onLogout}>
+          <Logout size={16} /> Logout
         </button>
       </div>
 
-      <div>
-        <div className="small mute">Halo,</div>
-        <h1>{me.host.name}</h1>
-      </div>
-
+      <div className="lay2">
+      <div className="col">
       <div className="card hero stack rise">
         <div className="row-between">
           <span className="chip chip-outline">
@@ -446,7 +455,7 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
           </span>
           <div className="grow">
             <h3 style={{ color: '#fff' }}>
-              AI Match Analysis <span className="beta-tag dark">BETA</span>
+              AI Match Analysis
             </h3>
             <p className="small" style={{ opacity: 0.75 }}>
               Upload video main: AI hitung pukulan, jarak lari & kalori, lalu jadikan video Reels.
@@ -476,6 +485,9 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </section>
       )}
 
+      </div>
+
+      <div className="col">
       <section className="stack">
         <div>
           <div className="eyebrow">Dari Wins Court</div>
@@ -553,6 +565,8 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
           </Link>
         ))}
       </section>
+      </div>
+      </div>
     </div>
   );
 }
