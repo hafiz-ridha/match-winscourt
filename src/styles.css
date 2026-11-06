@@ -2364,7 +2364,7 @@ input[type='range'] {
 }
 /* Papan skor wasit: memenuhi layar landscape. */
 :root[data-layout='wide'] .side {
-  min-height: max(320px, calc(100vh - 330px));
+  min-height: max(300px, calc(100vh - 400px));
 }
 /* AI Match Analysis: video lebih besar. */
 :root[data-layout='wide'] .an-calib canvas {
@@ -2526,4 +2526,28 @@ input[type='range'] {
     padding-left: 10px;
     padding-right: 10px;
   }
+}
+/* Kepala halaman sesi. Di HP: jam main menempel di bawah judul (jarak sama seperti sebelumnya). */
+.sess-time {
+  margin-top: -10px;
+}
+.sess-time:empty {
+  display: none;
+}
+/* Mode lebar: judul kiri, peran & jam main kanan → isi sesi langsung terlihat di layar landscape. */
+:root[data-layout='wide'] .sess-head {
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);
+  gap: 12px 28px;
+}
+:root[data-layout='wide'] .sess-time {
+  margin-top: 0;
+}
+:root[data-layout='wide'] .sess-head > .c2:first-child {
+  align-self: start;
+}
+/* Peringkat di mode lebar: tabel tidak terlalu renggang, tetap di tengah. */
+:root[data-layout='wide'] .rank-tab {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
 }

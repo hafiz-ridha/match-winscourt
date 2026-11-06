@@ -162,7 +162,7 @@ export function RankTab({ ctx }: { ctx: Ctx }) {
   const clubs = info.clubs ? clubTotals(s) : null;
   const shareTeams = info.fixedPairs && s.teamSize === 2;
   return (
-    <div className="stack-lg">
+    <div className="stack-lg rank-tab">
       <ShareRank s={s} list={shareTeams ? teamStandings(s) : players} title={shareTeams ? 'Peringkat tim' : ''} />
       {s.settings.hideLeaderboard && isHost && <div className="banner banner-warn">Peringkat disembunyikan dari pemain sampai sesi selesai.</div>}
       {clubs && (

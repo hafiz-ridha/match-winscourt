@@ -65,9 +65,12 @@ export function SessionPage() {
         {!live.online && <span className="chip chip-warn tiny">Menyambung ulang…</span>}
       </div>
 
-      <RoleBar s={s} role={live.role} playerId={live.playerId} />
+      <div className="lay2 tall2 sess-head">
+      <div className="c2">
+        <RoleBar s={s} role={live.role} playerId={live.playerId} />
+      </div>
 
-      <header className="stack" style={{ gap: 10 }}>
+      <header className="stack c1 r12" style={{ gap: 10 }}>
         <div className="row">
           {isHost && (
             <Link to="/" className="icon-btn" aria-label="Kembali">
@@ -91,8 +94,11 @@ export function SessionPage() {
         <div className="small mute row">
           <Clock size={14} /> {fmtDate(s.start)} · {fmtTime(s.start)}–{fmtTime(s.end)} · {rulesLabel(s.rules)}
         </div>
-        <PlayTime s={s} isHost={isHost} />
       </header>
+      <div className="stack c2 sess-time" style={{ gap: 10 }}>
+        <PlayTime s={s} isHost={isHost} />
+      </div>
+      </div>
 
       {tab === 'courts' && <CourtsTab ctx={ctx} onTab={(t) => setTab(t as Tab)} />}
       {tab === 'players' && <PlayersTab ctx={ctx} />}
