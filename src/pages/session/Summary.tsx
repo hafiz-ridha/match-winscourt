@@ -1,10 +1,13 @@
 import { useMemo } from 'react';
 import { formatInfo, isManualBooking, manualExpiry } from '../../../shared/formats.ts';
 import { fmtDate } from '../../../shared/util.ts';
-import { doneMatches, matchScore, playerStandings, teamStandings, unitsOf } from '../../../shared/standings.ts';
+import type { Session } from '../../../shared/types.ts';
+import { doneMatches, matchScore, playerStandings } from '../../../shared/standings.ts';
 import { Download, Share, Trophy } from '../../components/Icons.tsx';
+import { Medal } from '../../components/Medal.tsx';
 import { Confetti, useRun } from '../../components/ui.tsx';
 import { exportCsv, shareImage, type Ctx } from './helpers.ts';
+import { championText, podiumOf, type Podium as PodiumData, type PodiumEntry } from './podium.ts';
 import { StandingsTable } from './RankTab.tsx';
 
 export function Summary({ ctx }: { ctx: Ctx }) {
@@ -18,19 +21,7 @@ export function Summary({ ctx }: { ctx: Ctx }) {
     return a + sc.statA + sc.statB;
   }, 0);
 
-  const champion = useMemo(() => {
-    if (info.bracket) {
-      const final = s.bracket?.matches.find((m) => m.stage === 'Final' && m.winner);
-      if (final) return unitsOf(s).find((u) => u.id === final.winner)?.name ?? '—';
-    }
-    if (info.fixedPairs && s.teamSize === 2) return teamStandings(s)[0]?.name ?? '—';
-    if (info.clubs) {
-      const a = players.filter((p) => p.club === 'A').reduce((x, p) => x + p.pf, 0);
-      const b = players.filter((p) => p.club === 'B').reduce((x, p) => x + p.pf, 0);
-      return a === b ? 'Seri' : a > b ? 'Klub A' : 'Klub B';
-    }
-    return players[0]?.name ?? '—';
-  }, [s, info, players]);
+  const podium = useMemo(() => podiumOf(s), [s]);
 
   const mvp = players.slice().sort((x, y) => y.total - x.total)[0];
   const busiest = players.slice().sort((x, y) => y.played - x.played)[0];
@@ -39,16 +30,7 @@ export function Summary({ ctx }: { ctx: Ctx }) {
   return (
     <div className="stack-lg">
       <Confetti run />
-      <div className="card hero stack center rise" style={{ background: 'var(--lime)', color: 'var(--on-lime)', borderColor: 'transparent' }}>
-        <Trophy size={36} style={{ margin: '0 auto' }} />
-        <div className="eyebrow" style={{ color: 'var(--on-lime)' }}>
-          Juara sesi
-        </div>
-        <h1 style={{ fontSize: 34 }}>{champion}</h1>
-        <p className="small">
-          {matches.length} pertandingan · {totalPoints} {s.rules.kind === 'games' || s.rules.kind === 'sets' ? 'game' : 'poin'} dimainkan
-        </p>
-      </div>
+      <PodiumCard s={s} podium={podium} meta={`${matches.length} pertandingan · ${totalPoints} ${s.rules.kind === 'games' || s.rules.kind === 'sets' ? 'game' : 'poin'} dimainkan`} />
 
       <div className="choice-grid">
         {mvp && (
@@ -83,7 +65,7 @@ export function Summary({ ctx }: { ctx: Ctx }) {
       </div>
 
       <div className="row wrap no-print">
-        <button className="btn btn-primary grow" disabled={busy} onClick={() => run(() => shareImage(s, champion))}>
+        <button className="btn btn-primary grow" disabled={busy} onClick={() => run(() => shareImage(s))}>
           <Share size={18} /> Bagikan gambar
         </button>
         <button className="btn btn-ghost" onClick={() => window.print()}>
@@ -106,5 +88,67 @@ export function Summary({ ctx }: { ctx: Ctx }) {
 
       <StandingsTable list={players} mine={playerId} showComp={s.settings.compensation} title="Peringkat akhir" />
     </div>
+  );
+}
+
+/** Kartu juara sesi: tangga podium 2 – 1 – 3 dengan medali emas, perak, perunggu. */
+function PodiumCard({ s, podium, meta }: { s: Session; podium: PodiumData; meta: string }) {
+  const byRank = (r: 1 | 2 | 3) => podium.list.find((x) => x.rank === r);
+  const order = ([2, 1, 3] as const).map(byRank);
+  const club = podium.club;
+  return (
+    <section className="podium-card rise" aria-label="Juara sesi">
+      <div className="podium-head">
+        <span className="podium-trophy" aria-hidden>
+          <Trophy size={22} />
+        </span>
+        <div>
+          <div className="podium-eyebrow">{club ? 'Club vs Club · ' : ''}Juara sesi</div>
+          <h2 className="podium-title">{club ? (club.winner ? `Klub ${club.winner} menang` : 'Hasil seri') : s.name}</h2>
+          <p className="podium-meta">{club ? `Klub A ${club.a} – ${club.b} Klub B · ${meta}` : meta}</p>
+        </div>
+      </div>
+      {podium.list.length === 0 ? (
+        <p className="podium-empty">Belum ada pertandingan selesai.</p>
+      ) : (
+        <ol className={`podium${podium.list.length < 3 ? ' podium-few' : ''}`} aria-label={`Juara: ${championText(podium)}`}>
+          {order.map((e, i) => (e ? <PodiumStep key={e.rank} e={e} /> : <li key={`empty${i}`} className="podium-col empty" aria-hidden />))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const initials = (name: string) =>
+  name
+    .split(/\s+|&/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('') || '?';
+
+function PodiumStep({ e }: { e: PodiumEntry }) {
+  const label = e.rank === 1 ? 'Juara 1' : e.rank === 2 ? 'Juara 2' : e.names.length > 1 ? 'Juara 3 bersama' : 'Juara 3';
+  return (
+    <li className={`podium-col r${e.rank}`} value={e.rank}>
+      <div className="podium-person">
+        <div className="podium-avatar">
+          <span>{e.names.length > 1 ? '3' : initials(e.names[0])}</span>
+          <span className="podium-medal">
+            <Medal rank={e.rank} size={e.rank === 1 ? 34 : 28} />
+          </span>
+        </div>
+        <span className="podium-rank">{label}</span>
+        <b className="podium-name" title={e.names.join(' · ')}>
+          {e.names.map((n, i) => (
+            <span key={i}>{n}</span>
+          ))}
+        </b>
+        <span className="podium-stat">{e.stat}</span>
+      </div>
+      <div className="podium-step" aria-hidden>
+        <span>{e.rank}</span>
+      </div>
+    </li>
   );
 }
