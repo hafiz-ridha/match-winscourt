@@ -33,7 +33,7 @@ import {
 } from '../analysis/core.ts';
 import { DEFAULT_STYLE, drawExportFrame, speedsOf, drawMiniCourt, drawOverlay, exportVideo, frameAt, PLAYER_COLORS, recorderMime, type ExportStyle, type Ranking, type Result } from '../analysis/render.ts';
 import { exportMp4, mp4Codec, type Mp4Info } from '../analysis/mp4.ts';
-import { farTileCount, FrameProcessor, loadEngine, seek, type Engine } from '../analysis/vision.ts';
+import { detectFps, downloadHeavy, farTileCount, FrameProcessor, heavyReady, loadEngine, removeHeavy, seek, type Engine } from '../analysis/vision.ts';
 import { audioOnsets } from '../analysis/audio.ts';
 import { Back, Ball, Download, Info, Share, Shuttle, Swap } from '../components/Icons.tsx';
 import { Brand, Loader, Seg, Switch, useToast } from '../components/ui.tsx';
@@ -42,6 +42,15 @@ import { LoginCard } from './Home.tsx';
 /** Frame per detik yang dianalisis: 15 (normal) atau 30 (mode akurasi tinggi). */
 const fpsOf = (hq: boolean) => (hq ? 30 : 15);
 const HQ_KEY = 'mwc.hq';
+/** Pakai model heavy (bila sudah diunduh) di mode akurasi tinggi. */
+const HEAVY_KEY = 'mwc.heavy';
+const loadUseHeavy = () => {
+  try {
+    return localStorage.getItem(HEAVY_KEY) !== '0';
+  } catch {
+    return true;
+  }
+};
 const loadHq = () => {
   try {
     return localStorage.getItem(HQ_KEY) === '1';
@@ -835,15 +844,17 @@ function CalibStep({
           on={hq}
           onChange={setHq}
           label="Mode akurasi tinggi"
-          hint="Lebih teliti untuk pemain jauh & kok/bola kecil (30 frame/dtk, sisi jauh diperbesar)"
+          hint="Lebih teliti: kenali pemain dari warna baju, lacak dua arah, sisi jauh diperbesar, kok dicari di resolusi asli & fps asli video"
         />
         {hq && (
           <div className="banner banner-warn small">
             <span>
-              Proses analisis akan <b>±2–3× lebih lama</b> dan HP bisa lebih panas. Biarkan layar menyala sampai selesai.
+              Proses analisis akan <b>±2–3× lebih lama</b> (lebih lama lagi untuk video 60 fps atau dengan model heavy) dan HP bisa lebih panas. Biarkan layar
+              menyala sampai selesai.
             </span>
           </div>
         )}
+        {hq && <HeavyModel />}
       </div>
 
       <div className="row c2">
@@ -891,6 +902,7 @@ function ProcessStep({
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [delegate, setDelegate] = useState<string | null>(null);
+  const [run, setRun] = useState<{ fps: number; heavy: boolean } | null>(null);
   const pausedRef = useRef(false);
   const cancelled = useRef(false);
   const preview = useRef<HTMLCanvasElement>(null);
@@ -911,10 +923,21 @@ function ProcessStep({
         }
         // Bunyi pukulan dibaca dari audio sambil frame diproses.
         const onsetsP = audioOnsets(src, start, end);
-        engine = await loadEngine(setup.teamSize, setStatus, hq, farTileCount(cal, v.videoWidth, v.videoHeight, hq));
+        // Akurasi tinggi: ikuti fps asli video (24–60): kok tidak "melompat" jauh antar frame, dan
+        // tidak ada frame kembar (video 25 fps yang diambil 30×/dtk) yang mengacaukan deteksi gerak.
+        let FPS = fpsOf(hq);
+        if (hq) {
+          setStatus('Membaca fps video…');
+          const native = await detectFps(v);
+          if (native) FPS = Math.min(60, native);
+        }
+        engine = await loadEngine(setup.teamSize, setStatus, hq, farTileCount(cal, v.videoWidth, v.videoHeight, hq), hq && loadUseHeavy());
         if (cancelled.current) return;
         setDelegate(engine.delegate);
-        const FPS = fpsOf(hq);
+        setRun({ fps: FPS, heavy: engine.heavy });
+        // Titik kunci dibuat dengan fps bawaan → sesuaikan nomor framenya dengan fps yang dipakai.
+        const base = fpsOf(hq);
+        const keys = FPS === base ? anchors : anchors.map((a) => ({ ...a, frame: Math.round((a.frame / base) * FPS) }));
         const proc = new FrameProcessor(engine, v, cal);
         const obs: FrameObs[] = [];
         const total = Math.max(1, Math.floor((end - start) * FPS));
@@ -941,7 +964,7 @@ function ProcessStep({
         camRebase(obs, Math.round(0.5 * FPS));
         const onsets = await onsetsP;
         const calib: Calib = { sport: cal.sport, quad: cal.quad, aspect: cal.aspect, ref: cal.ref };
-        const tracks = trackPlayers(obs, calib, setup.teamSize, anchors);
+        const tracks = trackPlayers(obs, calib, setup.teamSize, keys, { bidir: hq });
         const shuttle = trackShuttle(obs, tracks, cal.aspect);
         const hits = detectHits(obs, tracks, shuttle, cal.sport, setup.teamSize, onsets ?? []);
         const frames = obs.map((o) => ({ t: o.t, cam: o.cam }));
@@ -960,7 +983,7 @@ function ProcessStep({
           names,
           weights: names.map(() => 65),
           obs,
-          anchors,
+          anchors: keys,
           title: setup.title,
         });
       } catch (e) {
@@ -997,7 +1020,11 @@ function ProcessStep({
           {eta !== null && <span className="tiny mute num">sisa ±{mmss(eta)}</span>}
         </div>
         {delegate === 'CPU' && <div className="tiny mute">HP ini memakai mode CPU, proses lebih lama. Hasil tetap sama.</div>}
-        {hq && <div className="tiny mute">Mode akurasi tinggi aktif: proses ±2–3× lebih lama dari biasa.</div>}
+        {hq && (
+          <div className="tiny mute">
+            Mode akurasi tinggi aktif{run ? ` · ${run.fps} frame/dtk${run.heavy ? ' · model heavy' : ''}` : ''}: proses lebih lama dari biasa.
+          </div>
+        )}
         <div className="row">
           <button
             className="btn btn-ghost grow"
@@ -1230,7 +1257,7 @@ function ReviewStep({
   };
   const retrack = (list: Anchor[]) => {
     if (!r.obs) return;
-    const next: Result = { ...r, anchors: list, tracks: trackPlayers(r.obs, r.cal, r.teamSize, list), hits: r.hits.map((h) => ({ ...h })) };
+    const next: Result = { ...r, anchors: list, tracks: trackPlayers(r.obs, r.cal, r.teamSize, list, { bidir: !!r.hq }), hits: r.hits.map((h) => ({ ...h })) };
     classifyAll(next.hits, next.frames, next.tracks, next.shuttle, next.sport, next.teamSize, locked.current);
     setR(next);
   };
@@ -2119,6 +2146,93 @@ function StylePreview({ src, r, layout, showKcal }: { src: string; r: Result; la
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ---------------- model heavy (unduh sendiri) ---------------- */
+
+/** Pilihan model AI paling teliti untuk mode akurasi tinggi: diunduh sekali atas pilihan pengguna. */
+function HeavyModel() {
+  const toast = useToast();
+  const [state, setState] = useState<'checking' | 'none' | 'downloading' | 'ready'>('checking');
+  const [prog, setProg] = useState(0);
+  const [use, setUseState] = useState(loadUseHeavy);
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    heavyReady().then((ok) => setState(ok ? 'ready' : 'none'));
+    return () => abort.current?.abort();
+  }, []);
+  const setUse = (v: boolean) => {
+    setUseState(v);
+    try {
+      localStorage.setItem(HEAVY_KEY, v ? '1' : '0');
+    } catch {
+      /* mode privat */
+    }
+  };
+  const download = async () => {
+    abort.current = new AbortController();
+    setState('downloading');
+    setProg(0);
+    try {
+      await downloadHeavy(setProg, abort.current.signal);
+      setState('ready');
+      setUse(true);
+      toast('Model heavy tersimpan di HP ini');
+    } catch (e) {
+      setState('none');
+      if ((e as Error).name !== 'AbortError') toast((e as Error).message || 'Gagal mengunduh model', true);
+    }
+  };
+  return (
+    <div className="card card-surface card-tight stack" style={{ gap: 8 }}>
+      <div className="row-between" style={{ alignItems: 'flex-start' }}>
+        <div className="grow">
+          <b className="small">Model AI paling teliti (heavy)</b>
+          <div className="tiny mute">
+            Lebih akurat untuk pemain jauh, kecil, atau tertutup net. Ukuran ±30 MB, diunduh sekali lalu disimpan di HP. Proses ±40–60% lebih lama.
+          </div>
+        </div>
+        {state === 'ready' && (
+          <button type="button" role="switch" aria-checked={use} aria-label="Pakai model heavy" className={`switch${use ? ' on' : ''}`} onClick={() => setUse(!use)} />
+        )}
+      </div>
+      {state === 'checking' && <div className="tiny mute">Memeriksa model…</div>}
+      {state === 'none' && (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={download}>
+          <Download size={16} /> Unduh model heavy (±30 MB)
+        </button>
+      )}
+      {state === 'downloading' && (
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="an-bar">
+            <span style={{ width: `${Math.round(prog * 100)}%` }} />
+          </div>
+          <div className="row-between tiny mute">
+            <span>Mengunduh… {Math.round(prog * 100)}%</span>
+            <button type="button" className="linkbtn tiny" onClick={() => abort.current?.abort()}>
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
+      {state === 'ready' && (
+        <div className="row-between tiny mute">
+          <span>{use ? '✓ Dipakai saat proses akurasi tinggi' : 'Tersimpan, tidak dipakai'}</span>
+          <button
+            type="button"
+            className="linkbtn tiny"
+            onClick={async () => {
+              await removeHeavy();
+              setState('none');
+              toast('Model heavy dihapus dari HP ini');
+            }}
+          >
+            Hapus dari HP
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,8 @@ const BASE = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker';
 const MODELS: Record<string, string> = {
   'pose_landmarker_full.task': `${BASE}/pose_landmarker_full/float16/1/pose_landmarker_full.task`,
   'pose_landmarker_lite.task': `${BASE}/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+  // Mode akurasi tinggi: model paling teliti untuk pemain jauh / kecil / tertutup sebagian (±30 MB).
+  'pose_landmarker_heavy.task': `${BASE}/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task`,
 };
 const dir = join(dirname(resolve(process.env.DB_FILE ?? 'data/match.db')), 'models');
 const pending = new Map<string, Promise<void>>();

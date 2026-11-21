@@ -46,14 +46,6 @@ interface Props {
   players?: boolean;
 }
 
-const initials = (name?: string) =>
-  (name ?? '')
-    .replace(/^\s*\d+[.)]\s*/, '')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('');
-
 /* ---------------- geometri ---------------- */
 
 const qPoint = (p0: Pt, c: Pt, p1: Pt, t: number): Pt => [
@@ -292,11 +284,8 @@ export function CourtArt({
                     </circle>
                   )}
                   {won && <circle cx={p[0]} cy={p[1]} r="14" fill="var(--lime)" opacity="0.45" />}
-                  <ellipse cx={p[0]} cy={p[1] + 10} rx="9" ry="2.6" fill="var(--text)" opacity="0.12" />
-                  <circle cx={p[0]} cy={p[1]} r="10" fill={team === 'a' ? 'var(--mint)' : 'var(--lime)'} stroke={isServer ? 'var(--text)' : 'var(--card)'} strokeWidth="2" />
-                  <text x={p[0]} y={p[1] + 3.2} textAnchor="middle" fontSize={name ? 8.5 : 0} fontWeight="800" fontFamily="var(--display)" fill="var(--on-lime)">
-                    {initials(name)}
-                  </text>
+                  <ellipse cx={p[0]} cy={p[1] + 11} rx="9.5" ry="2.6" fill="var(--text)" opacity="0.12" />
+                  <Chibi x={p[0]} y={p[1]} team={team} face={(side === 'A' ? 0 : 2) + i} facing={side === 'A' ? 1 : -1} sport={sport} ring={isServer} title={name ? cleanName(name) : undefined} />
                   {isServer && (
                     <g>
                       <circle cx={p[0] + 9} cy={p[1] - 9} r="5" fill="var(--text)" />
@@ -305,7 +294,7 @@ export function CourtArt({
                       </text>
                     </g>
                   )}
-                  {pl && <PlayerLabel x={p[0]} y={p[1] + 16} side={side} pl={pl} />}
+                  {pl && <PlayerLabel x={p[0]} y={p[1] + 18.5} side={side} pl={pl} />}
                 </g>
               );
             }),
@@ -460,6 +449,92 @@ function PadelLines() {
       <path className="line net" pathLength={1} d="M150 4V146" />
       <circle cx="150" cy="4" r="2.4" fill="var(--lime-deep)" />
       <circle cx="150" cy="146" r="2.4" fill="var(--lime-deep)" />
+    </g>
+  );
+}
+
+/* ---------------- karakter pemain (chibi) ---------------- */
+
+const SKIN = '#fff3df';
+const INK = '#2f2622';
+const TEAM = { a: { band: 'var(--mint)', dark: '#1f8f64' }, b: { band: 'var(--lime)', dark: 'var(--lime-deep)' } };
+
+/**
+ * Pemain bergaya chibi: kepala bulat seperti mochi, ikat kepala warna tim dengan simpul pita,
+ * pipi merona, 4 ekspresi bergantian, dan raket menghadap net (badminton: raket ramping, padel: paddle).
+ * Ukuran ±24 unit; titik (x, y) = tengah kepala.
+ */
+function Chibi({ x, y, team, face, facing, sport, ring, title }: { x: number; y: number; team: 'a' | 'b'; face: number; facing: 1 | -1; sport: Sport; ring?: boolean; title?: string }) {
+  const c = TEAM[team];
+  const f = face % 4;
+  return (
+    <g transform={`translate(${x} ${y}) scale(1.12)`}>
+      {title && <title>{title}</title>}
+      <g className="chibi" style={{ animationDelay: `${(face % 4) * -0.45}s` }}>
+        {/* raket di sisi menghadap net */}
+        <g transform={`scale(${facing} 1) translate(12.6 4.2) rotate(32)`}>
+          {sport === 'padel' ? (
+            <>
+              <rect x="-0.9" y="0" width="1.8" height="5.5" rx="0.9" fill={INK} />
+              <ellipse cx="0" cy="-4.2" rx="3.6" ry="4.6" fill={c.band} stroke={INK} strokeWidth="0.8" />
+              <circle cx="-1.2" cy="-5.2" r="0.55" fill={INK} opacity="0.55" />
+              <circle cx="1.2" cy="-5.2" r="0.55" fill={INK} opacity="0.55" />
+              <circle cx="0" cy="-3.2" r="0.55" fill={INK} opacity="0.55" />
+            </>
+          ) : (
+            <>
+              <rect x="-0.55" y="-1" width="1.1" height="7" rx="0.55" fill={INK} />
+              <ellipse cx="0" cy="-5.2" rx="3" ry="4.2" fill="#fff" fillOpacity="0.7" stroke={c.dark} strokeWidth="0.9" />
+              <path d="M-1.5 -8.4v6.4M0 -9.2v8M1.5 -8.4v6.4M-2.6 -6.6h5.2M-2.9 -5.2h5.8M-2.6 -3.8h5.2" stroke={c.dark} strokeWidth="0.3" opacity="0.7" />
+            </>
+          )}
+        </g>
+        {/* kepala */}
+        <ellipse cx="0" cy="0" rx="10.2" ry="9.2" fill={SKIN} stroke={ring ? 'var(--text)' : INK} strokeWidth={ring ? 1.6 : 1} />
+        {/* ikat kepala + simpul pita */}
+        <path d="M-9.6 -3.2 Q0 -7.4 9.6 -3.2 L9.2 -0.6 Q0 -4.8 -9.2 -0.6 Z" fill={c.band} stroke={INK} strokeWidth="0.7" />
+        <g transform={`scale(${-facing} 1)`}>
+          <path d="M9 -2.6 l4.2 -2.6 l-0.6 3.4 Z" fill={c.band} stroke={INK} strokeWidth="0.6" strokeLinejoin="round" />
+          <path d="M9 -1.8 l4 1.6 l-2.6 2 Z" fill={c.band} stroke={INK} strokeWidth="0.6" strokeLinejoin="round" />
+        </g>
+        {/* pipi */}
+        <ellipse cx="-5.6" cy="3.4" rx="1.9" ry="1.1" fill="#ff9aa2" opacity="0.65" />
+        <ellipse cx="5.6" cy="3.4" rx="1.9" ry="1.1" fill="#ff9aa2" opacity="0.65" />
+        {/* wajah: 4 ekspresi */}
+        <g transform={`translate(${facing * 0.8} 0)`} stroke={INK} strokeWidth="0.95" strokeLinecap="round" fill="none">
+          {f === 0 && (
+            <>
+              <path d="M-4.4 1.2 q1.2 -1.6 2.4 0" />
+              <path d="M2 1.2 q1.2 -1.6 2.4 0" />
+              <path d="M-1.4 3.6 q1.4 1.4 2.8 0" />
+            </>
+          )}
+          {f === 1 && (
+            <>
+              <circle cx="-3.1" cy="0.9" r="0.95" fill={INK} stroke="none" />
+              <path d="M2.1 1 h2.2" />
+              <path d="M-1.2 3.5 q1.2 1.1 2.4 0" />
+            </>
+          )}
+          {f === 2 && (
+            <>
+              <path d="M-4.6 -0.6 l2.2 0.7 M4.6 -0.6 l-2.2 0.7" />
+              <circle cx="-3.2" cy="1.4" r="0.9" fill={INK} stroke="none" />
+              <circle cx="3.2" cy="1.4" r="0.9" fill={INK} stroke="none" />
+              <path d="M-1 4 h2" />
+            </>
+          )}
+          {f === 3 && (
+            <>
+              <circle cx="-3.2" cy="1" r="1.05" fill={INK} stroke="none" />
+              <circle cx="3.2" cy="1" r="1.05" fill={INK} stroke="none" />
+              <circle cx="-2.85" cy="0.65" r="0.35" fill="#fff" stroke="none" />
+              <circle cx="3.55" cy="0.65" r="0.35" fill="#fff" stroke="none" />
+              <path d="M-1.5 3.4 q1.5 2 3 0 Z" fill="#e85d6a" strokeWidth="0.8" />
+            </>
+          )}
+        </g>
+      </g>
     </g>
   );
 }

@@ -7,6 +7,7 @@ import {
   camCompose,
   camInvert,
   camRebase,
+  colorSim,
   detectHits,
   detectOnsets,
   estimateMotion,
@@ -460,4 +461,38 @@ test('suara pukulan: pukulan yang tak terlihat (kok hilang) tetap terhitung dari
     assert.ok(Math.abs(h.frame - k * per) <= 1, `frame ${h.frame}`);
     assert.equal(h.player, k % 2 === 0 ? 0 : 1, 'pemukul bergantian sesuai sisi');
   }
+});
+
+test('akurasi tinggi: dua pemain satu tim bersilangan tidak tertukar berkat warna baju', () => {
+  // Ganda: dua pemain dekat berjalan saling menyilang (kiri ↔ kanan) dan sempat berimpit.
+  const red = [0.7, 0.1, 0.1, 0.05, 0.05];
+  const blue = [0.05, 0.05, 0.1, 0.1, 0.7];
+  const green = [0.1, 0.7, 0.1, 0.05, 0.05];
+  const gray = [0.2, 0.2, 0.2, 0.2, 0.2];
+  const frames: FrameObs[] = [];
+  const T = 60;
+  for (let f = 0; f < T; f++) {
+    const q = f / (T - 1);
+    // Di tengah keduanya BERIMPIT di titik yang sama (posisi saja tidak bisa membedakan), lalu berpisah.
+    const mid = f >= 24 && f <= 34;
+    const a = mid ? { x: 3, y: 10 } : { x: 1 + 4 * q, y: 10 }; // merah: kiri → kanan
+    const b = mid ? { x: 3, y: 10.05 } : { x: 5 - 4 * q, y: 10 }; // biru: kanan → kiri
+    const pa = { ...pose(a), color: red };
+    const pb = { ...pose(b), color: blue };
+    const near = f % 2 ? [pa, pb] : [pb, pa];
+    const far = [{ ...pose({ x: 2, y: 3 }), color: green }, { ...pose({ x: 4.2, y: 3 }), color: gray }];
+    frames.push({ t: f / 15, poses: [...near, ...far], blobs: [] });
+  }
+  const tracks = trackPlayers(frames, cal, 2, [], { bidir: true });
+  // Slot 0 mulai di kiri (merah) → harus berakhir di kanan, tetap merah.
+  const first = tracks[0].frames.find(Boolean)!;
+  const lastF = [...tracks[0].frames].reverse().find(Boolean)!;
+  assert.ok(first.court.x < 2.5, `awal ${first.court.x}`);
+  assert.ok(lastF.court.x > 3.5, `slot 0 harus ikut pemain merah ke kanan, akhir x=${lastF.court.x.toFixed(2)}`);
+  for (let f = 40; f < T; f++) {
+    const a = tracks[0].frames[f];
+    const b = tracks[1].frames[f];
+    if (a && b) assert.ok(a.court.x > b.court.x, `frame ${f}: slot 0 (merah) di kanan slot 1 (biru)`);
+  }
+  assert.ok(colorSim(red, red) > 0.99 && colorSim(red, blue) < 0.7);
 });

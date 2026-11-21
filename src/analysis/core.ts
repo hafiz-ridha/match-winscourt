@@ -405,6 +405,20 @@ export interface PoseObs {
   score: number;
   /** true = kaki tertutup (mis. net) → posisi kaki diperkirakan dari pinggul/lutut. */
   est?: boolean;
+  /** "Sidik warna" baju (histogram warna badan, jumlah = 1). Hanya di mode akurasi tinggi. */
+  color?: number[];
+}
+
+/** Kemiripan dua histogram warna (Bhattacharyya, 0 = beda total, 1 = sama). */
+export function colorSim(a: number[], b: number[]): number {
+  let s = 0;
+  for (let i = 0; i < a.length && i < b.length; i++) s += Math.sqrt(a[i] * b[i]);
+  return s;
+}
+
+export interface TrackOpts {
+  /** Lacak dua arah: celah pelacakan maju diisi dari arah sebaliknya (mode akurasi tinggi). */
+  bidir?: boolean;
 }
 
 export interface Blob {
@@ -484,7 +498,7 @@ function anchorRef(list: Anchor[], fi: number): { p: Pt; d: number; between?: bo
  * atau titik kunci manual). Deteksi di luar jangkauan gerak yang masuk akal ditolak — mencegah titik
  * pindah ke penonton / pemain lapangan sebelah. Di frame titik kunci, posisi pemain dipaksa ke kunci itu.
  */
-export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, anchors: Anchor[] = []): Track[] {
+export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, anchors: Anchor[] = [], opts: TrackOpts = {}): Track[] {
   const { spec, toCourt, toImage } = calibMaps(cal);
   const n = teamSize * 2;
   const dt = frameDt(frames);
@@ -495,6 +509,30 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
   const half = spec.L / 2;
   const bySlot = Array.from({ length: n }, (_, s) => anchors.filter((a) => a.slot === s));
   const MISS = 2.5; // biaya "tidak terdeteksi" (meter): lebih murah daripada memaksa deteksi yang jauh
+  /**
+   * Sidik warna baju per slot (rata-rata bergerak dari deteksi yang yakin). Dua pemain satu tim
+   * yang berdekatan dibedakan dari warna bajunya, bukan hanya dari posisi → tidak mudah tertukar.
+   */
+  const model: (number[] | null)[] = Array(n).fill(null);
+  const COLOR_W = 2.5; // bobot (meter setara) bila deteksi jelas lebih mirip pemain lain
+  /**
+   * Penalti warna RELATIF: hanya bila deteksi ini jelas lebih mirip rekan satu sisi daripada slot
+   * ini. Warna yang mirip-mirip (baju senada, cahaya redup) tidak menghukum → deteksi benar tidak ditolak.
+   */
+  const colorCost = (slot: number, c?: number[]) => {
+    const m = model[slot];
+    if (!m || !c) return 0;
+    const mate = slot < teamSize ? 1 - slot : teamSize * 2 - 1 - (slot - teamSize);
+    const mm = teamSize === 2 ? model[mate] : null;
+    if (!mm) return 0;
+    const gap = colorSim(mm, c) - colorSim(m, c);
+    return gap > 0.08 ? COLOR_W * Math.min(1, (gap - 0.08) / 0.3) : 0;
+  };
+  const learn = (slot: number, c?: number[], rate = 0.08) => {
+    if (!c) return;
+    const m = model[slot];
+    model[slot] = m ? m.map((v, i) => v * (1 - rate) + c[i] * rate) : c.slice();
+  };
   /**
    * Toleransi tambahan (meter) karena perspektif: di sisi jauh, selisih ±1,2% lebar gambar setara
    * jarak yang jauh lebih besar di lapangan. Tanpa ini, deteksi pemain jauh yang benar sering ditolak.
@@ -523,17 +561,33 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
     return { court: p, foot, box: b, wristL: hand, wristR: hand, shoulderY: foot.y - b.h * 0.8, noseY: foot.y - b.h * 0.92, manual: true };
   };
 
-  frames.forEach((f, fi) => {
+  const candsAt = frames.map((f) => {
     const all = f.poses
       .map((p) => ({ p, c: toCourt(camApply(f.cam, p.foot, cal.aspect)) }))
       .filter(({ c }) => Number.isFinite(c.x) && c.x > -2 && c.x < spec.W + 2 && c.y > -3.5 && c.y < spec.L + 3.5)
       .sort((a, b) => b.p.score - a.p.score);
     // Buang duplikat (pose ganda untuk orang yang sama).
-    const cands = all.filter((x, i) => all.findIndex((y) => dist(y.c, x.c) < 0.5) === i);
+    return all.filter((x, i) => all.findIndex((y) => dist(y.c, x.c) < 0.5) === i);
+  });
+  type Cand = (typeof candsAt)[number][number];
+  const frameOf = (c: Cand, manual = false): PlayerFrame => ({
+    court: c.c,
+    foot: c.p.foot,
+    box: c.p.box,
+    wristL: c.p.wristL,
+    wristR: c.p.wristR,
+    shoulderY: (c.p.shoulderL.y + c.p.shoulderR.y) / 2,
+    noseY: c.p.nose.y,
+    manual,
+  });
+  const onSide = (side: 'near' | 'far', c: Cand) => (side === 'near' ? c.c.y >= half - 0.4 : c.c.y <= half + 0.4);
+
+  frames.forEach((f, fi) => {
+    const cands = candsAt[fi];
 
     for (const side of ['near', 'far'] as const) {
       const slots = side === 'near' ? [...Array(teamSize).keys()] : [...Array(teamSize).keys()].map((i) => i + teamSize);
-      const mine = cands.filter(({ c }) => (side === 'near' ? c.y >= half - 0.4 : c.y <= half + 0.4)).slice(0, 6);
+      const mine = cands.filter((c) => onSide(side, c)).slice(0, 6);
 
       // Acuan & batas jangkauan per slot.
       const info = slots.map((slot) => {
@@ -556,7 +610,7 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         const c = mine[ci];
         if (ar && dist(c.c, ar.p) > aGate) return Infinity;
         // Kaki perkiraan (tertutup net) sedikit kurang dipercaya daripada kaki yang terlihat.
-        const pen = c.p.est ? 0.35 : 0;
+        const pen = (c.p.est ? 0.35 : 0) + colorCost(info[si].slot, c.p.color);
         if (ref) {
           const d = dist(c.c, ref);
           return d > gate ? Infinity : d + pen;
@@ -611,19 +665,48 @@ export function trackPlayers(frames: FrameObs[], cal: Calib, teamSize: 1 | 2, an
         last[slot] = c.c;
         lastSeen[slot] = fi;
         lastBox[slot] = c.p.box;
-        tracks[slot].frames.push({
-          court: c.c,
-          foot: c.p.foot,
-          box: c.p.box,
-          wristL: c.p.wristL,
-          wristR: c.p.wristR,
-          shoulderY: (c.p.shoulderL.y + c.p.shoulderR.y) / 2,
-          noseY: c.p.nose.y,
-          manual: !!ar && ar.d === 0,
-        });
+        // Warna dipelajari dari deteksi yang yakin: di titik kunci (pasti benar) lebih cepat.
+        if (!c.p.est && c.p.score > 0.5) learn(slot, c.p.color, ar && ar.d === 0 ? 0.5 : 0.08);
+        tracks[slot].frames.push(frameOf(c, !!ar && ar.d === 0));
       });
     }
   });
+
+  // Pelacakan mundur: celah di jalur maju diisi dengan melacak dari posisi SESUDAH celah ke belakang.
+  // Deteksi yang sudah dipakai pemain lain di frame itu tidak boleh diambil.
+  if (opts.bidir) {
+    for (let slot = 0; slot < n; slot++) {
+      const side = slot < teamSize ? 'near' : 'far';
+      const fr = tracks[slot].frames;
+      let ref: Pt | null = null;
+      let seen = 0;
+      for (let fi = fr.length - 1; fi >= 0; fi--) {
+        const cur = fr[fi];
+        if (cur) {
+          ref = cur.court;
+          seen = fi;
+          continue;
+        }
+        if (!ref || (seen - fi) * dt > 3) continue;
+        const taken = tracks.map((t, s2) => (s2 !== slot ? t.frames[fi]?.court : undefined)).filter((x): x is Pt => !!x);
+        const gate = 1.0 + tol(ref) + 7 * dt * (seen - fi);
+        let best: Cand | null = null;
+        let bc = Infinity;
+        for (const c of candsAt[fi]) {
+          if (!onSide(side, c) || taken.some((t) => dist(t, c.c) < 0.6)) continue;
+          const d = dist(c.c, ref);
+          if (d > gate) continue;
+          const k = d + (c.p.est ? 0.35 : 0) + colorCost(slot, c.p.color);
+          if (k < bc) (bc = k), (best = c);
+        }
+        if (best && bc < MISS) {
+          fr[fi] = frameOf(best);
+          ref = best.c;
+          seen = fi;
+        }
+      }
+    }
+  }
   for (const t of tracks) fillGaps(t, Math.max(6, Math.round(0.8 / dt)));
   return tracks;
 }
