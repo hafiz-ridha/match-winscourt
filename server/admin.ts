@@ -14,7 +14,7 @@ import { matchScore, playerStandings } from '../shared/standings.ts';
 import { scoreSummary } from '../shared/scoring.ts';
 import type { Session } from '../shared/types.ts';
 import { HttpError } from './actions.ts';
-import { accounts, admin, hostById } from './db.ts';
+import { accounts, admin, hostById, renterPins } from './db.ts';
 
 const ADMIN_USER = (process.env.ADMIN_USER ?? 'root').trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? '';
@@ -124,17 +124,41 @@ adminRouter.get('/overview', (req, res) => {
   });
 });
 
-/** Reset PIN akun umum: PIN baru 6 digit acak, ditampilkan sekali ke admin untuk diberikan ke pengguna. */
+/**
+ * Reset PIN: PIN baru 6 digit acak, ditampilkan sekali ke admin untuk diberikan ke pengguna.
+ * Akun umum → PIN akun; penyewa Wins Court → PIN login cepat (dibuat bila belum ada).
+ */
 adminRouter.post('/users/:id/reset-pin', (req, res) => {
   requireAdmin(req);
   const host = hostById(req.params.id);
-  if (!host || !accounts.byHost(host.id)) throw new HttpError(404, 'Akun umum tidak ditemukan');
+  if (!host) throw new HttpError(404, 'Pengguna tidak ditemukan');
+  const isAccount = !!accounts.byHost(host.id);
   let pin = '';
   do pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
   while (/^(\d)\1{5}$/.test(pin) || '0123456789012345'.includes(pin) || '9876543210987654'.includes(pin));
   const salt = randomBytes(16).toString('hex');
-  admin.setPin(host.id, scryptSync(pin, salt, 32).toString('hex'), salt);
+  if (isAccount) admin.setPin(host.id, scryptSync(pin, salt, 32).toString('hex'), salt);
+  else renterPins.set(host.id, scryptSync(pin, salt, 32).toString('hex'), salt);
   res.json({ pin, name: host.name });
+});
+
+/** Dipasang oleh server: menutup siaran langsung sesi yang ikut terhapus. */
+export const adminHooks = { sessionsRemoved: (_slugs: string[]) => {} };
+
+/**
+ * Hapus pengguna permanen: data host, akun umum, dan semua sesinya. Konfirmasi wajib berupa
+ * nama pengguna yang diketik ulang supaya tidak terhapus karena salah klik.
+ */
+adminRouter.delete('/users/:id', (req, res) => {
+  requireAdmin(req);
+  const host = hostById(req.params.id);
+  if (!host) throw new HttpError(404, 'Pengguna tidak ditemukan');
+  const confirm = String(req.body?.confirm ?? '').trim().toLowerCase();
+  if (confirm !== host.name.trim().toLowerCase()) throw new HttpError(400, 'Ketik nama pengguna dengan benar untuk konfirmasi');
+  const { slugs } = admin.deleteUser(host.id);
+  adminHooks.sessionsRemoved(slugs);
+  console.log(`[admin] pengguna dihapus: ${host.id} (${slugs.length} sesi)`);
+  res.json({ ok: true, name: host.name, sessions: slugs.length });
 });
 
 /* ---------------- unduhan ---------------- */

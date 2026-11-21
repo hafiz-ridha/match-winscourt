@@ -16,6 +16,8 @@ interface AdminUser {
   account_created_at: number | null;
   sessions: number;
   last_activity: number | null;
+  /** Penyewa sudah membuat PIN login cepat (1/0). */
+  has_pin?: number;
 }
 
 interface AdminSession {
@@ -159,6 +161,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [downloading, setDownloading] = useState<string | null>(null);
   const [reset, setReset] = useState<AdminUser | null>(null);
   const [newPin, setNewPin] = useState<string | null>(null);
+  const [del, setDel] = useState<AdminUser | null>(null);
+  const [delConfirm, setDelConfirm] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -203,6 +208,23 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     } catch (e) {
       toast((e as Error).message, true);
       setReset(null);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!del) return;
+    setDeleting(true);
+    try {
+      const res = await adminFetch(`/users/${del.id}`, token, { method: 'DELETE', body: JSON.stringify({ confirm: delConfirm }) });
+      const out = (await res.json()) as { name: string; sessions: number };
+      toast(`${out.name} dihapus${out.sessions ? ` beserta ${out.sessions} sesi` : ''}`);
+      setDel(null);
+      await load();
+    } catch (e) {
+      if ((e as { status?: number }).status === 401) onLogout();
+      else toast((e as Error).message, true);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -319,6 +341,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                     <td style={{ textAlign: 'left' }}>{u.email ?? <span className="whisper">–</span>}</td>
                     <td style={{ textAlign: 'left' }}>
                       <span className={`chip tiny ${u.type === 'akun_umum' ? 'chip-lime' : 'chip-mint'}`}>{u.type === 'akun_umum' ? 'Akun umum' : 'Penyewa Wins'}</span>
+                      {u.type === 'penyewa_wins' && !!u.has_pin && (
+                        <span className="chip tiny chip-outline" style={{ marginLeft: 4 }} title="Sudah membuat PIN login cepat">
+                          PIN
+                        </span>
+                      )}
                     </td>
                     <td>{u.sessions}</td>
                     <td style={{ textAlign: 'left' }} className="tiny">
@@ -328,11 +355,14 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                       {dt(u.last_activity)}
                     </td>
                     <td>
-                      {u.type === 'akun_umum' && (
+                      <div className="row" style={{ gap: 6, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                         <button className="btn btn-ghost btn-xs" onClick={() => (setNewPin(null), setReset(u))}>
                           Reset PIN
                         </button>
-                      )}
+                        <button className="btn btn-ghost btn-xs admin-del" onClick={() => (setDelConfirm(''), setDel(u))} aria-label={`Hapus ${u.name}`}>
+                          Hapus
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -403,6 +433,49 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         )}
       </section>
 
+      <Sheet open={!!del} onClose={() => !deleting && setDel(null)} title="Hapus pengguna">
+        {del && (
+          <div className="stack">
+            <div className="card card-surface card-tight stack" style={{ gap: 4 }}>
+              <b>{del.name}</b>
+              <span className="small mute">
+                {phoneFmt(del.phone)}
+                {del.email ? ` · ${del.email}` : ''} · {del.type === 'akun_umum' ? 'Akun umum' : 'Penyewa Wins Court'}
+              </span>
+            </div>
+            <div className="banner banner-danger small">
+              <span>
+                Dihapus <b>permanen</b> dan tidak bisa dibatalkan:
+                <br />· data pengguna{del.type === 'akun_umum' ? ', email & PIN akun umum' : ''}
+                <br />· <b>{del.sessions} sesi</b> miliknya beserta pemain, ronde, skor & peringkat
+              </span>
+            </div>
+            {del.type === 'penyewa_wins' && (
+              <p className="tiny mute">Penyewa Wins Court tetap bisa masuk lagi dengan booking-nya; ia akan tercatat sebagai pengguna baru tanpa riwayat sesi.</p>
+            )}
+            <p className="tiny mute">Perlu cadangan? Unduh "Backup database" dulu sebelum menghapus.</p>
+            <label className="field">
+              <span className="label">
+                Ketik <b>{del.name}</b> untuk konfirmasi
+              </span>
+              <input className="input" value={delConfirm} onChange={(e) => setDelConfirm(e.target.value)} placeholder={del.name} autoComplete="off" autoFocus />
+            </label>
+            <div className="row">
+              <button className="btn btn-ghost" disabled={deleting} onClick={() => setDel(null)}>
+                Batal
+              </button>
+              <button
+                className="btn btn-danger grow admin-del-go"
+                disabled={deleting || delConfirm.trim().toLowerCase() !== del.name.trim().toLowerCase()}
+                onClick={doDelete}
+              >
+                {deleting ? 'Menghapus…' : 'Hapus permanen'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Sheet>
+
       <Sheet open={!!reset} onClose={() => (setReset(null), setNewPin(null))} title="Reset PIN">
         {newPin ? (
           <>
@@ -421,6 +494,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           <>
             <p className="small mute">
               Buat PIN baru 6 digit untuk <b>{reset?.name}</b> ({reset && phoneFmt(reset.phone)}). PIN lama tidak berlaku lagi.
+              {reset?.type === 'penyewa_wins' && ' Penyewa Wins Court masuk dengan no. HP + PIN ini; jadwal booking tetap dari Wins Court.'}
             </p>
             <button className="btn btn-primary btn-block" onClick={doReset}>
               Buat PIN baru

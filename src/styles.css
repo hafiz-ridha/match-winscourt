@@ -2841,3 +2841,15 @@ input[type='range'] {
 :root[data-layout='wide'] .r1 .podium-name {
   font-size: 21px;
 }
+/* Admin: tombol hapus pengguna. */
+.admin-del {
+  color: var(--danger);
+}
+.admin-del:hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+.admin-del-go:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}

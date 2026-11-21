@@ -7,7 +7,7 @@ import { fmtDate, fmtTime, normalizePhone } from '../../shared/util.ts';
 import { api, auth, type Me } from '../api.ts';
 import { CourtArt } from '../components/CourtArt.tsx';
 import { Arrow, Ball, Court, Lock, Logout, Plus, Shuttle, Whistle } from '../components/Icons.tsx';
-import { Brand, Loader, Seg, SportChip, useRun } from '../components/ui.tsx';
+import { Brand, Loader, Seg, SportChip, useRun, useToast } from '../components/ui.tsx';
 
 export function Home() {
   const [me, setMe] = useState<Me | null>(null);
@@ -85,7 +85,7 @@ function AccountAuth({ onDone }: { onDone: () => void }) {
   // Petunjuk langsung (server tetap memeriksa ulang, termasuk server email domain).
   const emailHint = email.includes('@') && email.split('@')[1]?.includes('.') ? emailIssue(email) : null;
   const emailFix = emailSuggestion(email);
-  const phoneDigits = phone.replace(/D/g, '');
+  const phoneDigits = phone.replace(/\D/g, '');
   const phoneHint = phoneDigits.length >= 10 ? phoneIssue(normalizePhone(phone)) : null;
   return (
     <div className="stack">
@@ -254,8 +254,11 @@ function Login({ onDone }: { onDone: () => void }) {
 /** Form login host (penyewa Wins Court / akun umum) — dipakai di beranda & halaman yang wajib login. */
 export function LoginCard({ onDone, title = 'Masuk sebagai host', hint }: { onDone: () => void; title?: string; hint?: string }) {
   const [mode, setMode] = useState<'renter' | 'account'>('renter');
+  // Penyewa: masuk pakai nama + no. HP (dicek ke jadwal Wins Court) atau no. HP + PIN login cepat.
+  const [via, setVia] = useState<'name' | 'pin'>(() => (auth.pref('renterPin') === '1' ? 'pin' : 'name'));
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [demo, setDemo] = useState<{ name: string; phone: string; note: string }[]>([]);
   const { run, busy } = useRun();
@@ -268,8 +271,9 @@ export function LoginCard({ onDone, title = 'Masuk sebagai host', hint }: { onDo
     e.preventDefault();
     setError(null);
     try {
-      const r = await api.login(name, phone);
+      const r = via === 'pin' ? await api.renterPinLogin(phone, pin) : await api.login(name, phone);
       auth.set(r.token);
+      if (via === 'pin') auth.setPref('renterPin', '1');
       onDone();
     } catch (err) {
       setError((err as Error).message);
@@ -292,15 +296,37 @@ export function LoginCard({ onDone, title = 'Masuk sebagai host', hint }: { onDo
           <AccountAuth onDone={onDone} />
         ) : (
       <form className="stack" onSubmit={submit}>
-        <p className="small mute">Pakai nama dan no. HP yang tercatat saat booking lapangan di Wins Court.</p>
-        <label className="field">
-          <span className="label">Nama penyewa</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contoh: Budi Santoso" autoComplete="name" required />
-        </label>
+        <p className="small mute">
+          {via === 'pin'
+            ? 'Masuk cepat dengan no. HP dan PIN 6 angka yang sudah kamu buat. Jadwal booking tetap diambil dari Wins Court.'
+            : 'Pakai nama dan no. HP yang tercatat saat booking lapangan di Wins Court.'}
+        </p>
+        {via === 'name' && (
+          <label className="field">
+            <span className="label">Nama penyewa</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contoh: Budi Santoso" autoComplete="name" required />
+          </label>
+        )}
         <label className="field">
           <span className="label">No. HP</span>
           <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08xx xxxx xxxx" inputMode="tel" autoComplete="tel" required />
         </label>
+        {via === 'pin' && (
+          <label className="field">
+            <span className="label">PIN 6 angka</span>
+            <input
+              className="input input-pin"
+              type="password"
+              inputMode="numeric"
+              autoComplete="current-password"
+              maxLength={6}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="••••••"
+              required
+            />
+          </label>
+        )}
         {error && (
           <div className="banner banner-danger stack" style={{ gap: 8 }}>
             <span>{error}</span>
@@ -311,10 +337,20 @@ export function LoginCard({ onDone, title = 'Masuk sebagai host', hint }: { onDo
             )}
           </div>
         )}
-        <button className="btn btn-primary btn-block" disabled={busy}>
+        <button className="btn btn-primary btn-block" disabled={busy || (via === 'pin' && pin.length !== 6)}>
           Masuk <Arrow size={18} />
         </button>
-        {demo.length > 0 && (
+        <button
+          type="button"
+          className="linkbtn small center"
+          onClick={() => {
+            setError(null);
+            setVia(via === 'pin' ? 'name' : 'pin');
+          }}
+        >
+          {via === 'pin' ? 'Lupa PIN / belum punya PIN? Masuk dengan nama & no. HP' : 'Sudah punya PIN? Masuk dengan no. HP + PIN'}
+        </button>
+        {demo.length > 0 && via === 'name' && (
           <div className="card card-surface card-tight stack" style={{ gap: 8 }}>
             <div className="eyebrow">Mode demo · data booking contoh</div>
             {demo.map((d) => (
@@ -465,6 +501,8 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </div>
       </Link>
 
+      {!me.account && <RenterPinCard has={!!me.renterPin} />}
+
       {me.account && (
         <section className="card stack rise">
           <div className="row" style={{ alignItems: 'flex-start' }}>
@@ -568,5 +606,92 @@ function HostHome({ me, onLogout }: { me: Me; onLogout: () => void }) {
       </div>
       </div>
     </div>
+  );
+}
+
+/** Penyewa Wins Court: buat / ubah PIN 6 digit supaya login berikutnya cukup no. HP + PIN. */
+function RenterPinCard({ has }: { has: boolean }) {
+  const toast = useToast();
+  const [on, setOn] = useState(has);
+  const [open, setOpen] = useState(false);
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const { run, busy } = useRun();
+  const field = (value: string, set: (v: string) => void, label: string) => (
+    <label className="field grow">
+      <span className="label">{label}</span>
+      <input
+        className="input input-pin"
+        type="password"
+        inputMode="numeric"
+        autoComplete="new-password"
+        maxLength={6}
+        value={value}
+        onChange={(e) => set(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        placeholder="••••••"
+        required
+      />
+    </label>
+  );
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (pin !== pin2) return setError('PIN dan ulangi PIN belum sama');
+    run(async () => {
+      try {
+        await api.setRenterPin(pin);
+        auth.setPref('renterPin', '1');
+        setOn(true);
+        setOpen(false);
+        setPin('');
+        setPin2('');
+        toast(has || on ? 'PIN diperbarui' : 'PIN dibuat. Berikutnya masuk cukup dengan no. HP + PIN');
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    });
+  };
+  return (
+    <section className="card stack rise">
+      <div className="row" style={{ alignItems: 'flex-start' }}>
+        <span className="icon-btn" style={{ background: on ? 'var(--lime)' : 'var(--surface)', borderColor: 'transparent' }}>
+          <Lock size={18} />
+        </span>
+        <div className="grow">
+          <h3>{on ? 'PIN login cepat aktif' : 'Buat PIN login cepat'}</h3>
+          <p className="small mute">
+            {on
+              ? 'Masuk lagi cukup dengan no. HP + PIN. Jadwal booking tetap otomatis dari Wins Court.'
+              : 'Tidak perlu mengetik nama tiap kali masuk: cukup no. HP + PIN 6 angka. Jadwal booking tetap otomatis dari Wins Court.'}
+          </p>
+        </div>
+        {on && !open && (
+          <button className="btn btn-ghost btn-sm" style={{ flex: 'none' }} onClick={() => setOpen(true)}>
+            Ubah PIN
+          </button>
+        )}
+      </div>
+      {(!on || open) && (
+        <form className="stack" onSubmit={save}>
+          <div className="row" style={{ alignItems: 'flex-end' }}>
+            {field(pin, setPin, on ? 'PIN baru' : 'PIN 6 angka')}
+            {field(pin2, setPin2, 'Ulangi PIN')}
+          </div>
+          <p className="tiny mute">Hindari angka sama atau berurutan (mis. 111111, 123456). Lupa PIN? Masuk saja dengan nama & no. HP lalu buat PIN baru.</p>
+          {error && <div className="banner banner-danger small">{error}</div>}
+          <div className="row">
+            {on && (
+              <button type="button" className="btn btn-ghost" onClick={() => (setOpen(false), setError(null))}>
+                Batal
+              </button>
+            )}
+            <button className="btn btn-primary grow" disabled={busy || pin.length !== 6 || pin2.length !== 6}>
+              {on ? 'Simpan PIN baru' : 'Buat PIN'}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }

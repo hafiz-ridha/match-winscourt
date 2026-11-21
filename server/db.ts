@@ -39,6 +39,14 @@ db.exec(`
     pin_salt TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  -- PIN login cepat penyewa Wins Court: masuk lagi dengan no. HP + PIN 6 digit, tanpa mengetik nama.
+  -- Jadwal tetap diambil dari Wins Court memakai nama & no. HP yang tersimpan di hosts.
+  CREATE TABLE IF NOT EXISTS renter_pins (
+    host_id TEXT PRIMARY KEY,
+    pin_hash TEXT NOT NULL,
+    pin_salt TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `);
 
 export interface Host {
@@ -89,6 +97,27 @@ export const accounts = {
   },
 };
 
+export interface RenterPin {
+  host_id: string;
+  pin_hash: string;
+  pin_salt: string;
+}
+
+export const renterPins = {
+  byHost(hostId: string): RenterPin | undefined {
+    return db.prepare('SELECT host_id, pin_hash, pin_salt FROM renter_pins WHERE host_id = ?').get(hostId) as RenterPin | undefined;
+  },
+  set(hostId: string, pinHash: string, salt: string) {
+    db.prepare(
+      `INSERT INTO renter_pins (host_id, pin_hash, pin_salt, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(host_id) DO UPDATE SET pin_hash = excluded.pin_hash, pin_salt = excluded.pin_salt, updated_at = excluded.updated_at`,
+    ).run(hostId, pinHash, salt, Date.now());
+  },
+  remove(hostId: string) {
+    db.prepare('DELETE FROM renter_pins WHERE host_id = ?').run(hostId);
+  },
+};
+
 /* ---------- dashboard admin ---------- */
 
 export interface AdminUser {
@@ -101,6 +130,8 @@ export interface AdminUser {
   account_created_at: number | null;
   sessions: number;
   last_activity: number | null;
+  /** Penyewa Wins Court sudah membuat PIN login cepat. */
+  has_pin: number;
 }
 
 export interface AdminSessionRow {
@@ -119,7 +150,8 @@ export const admin = {
         `SELECT h.id, h.name, h.phone, a.email, h.created_at, a.created_at AS account_created_at,
                 CASE WHEN a.host_id IS NULL THEN 'penyewa_wins' ELSE 'akun_umum' END AS type,
                 (SELECT COUNT(*) FROM sessions s WHERE s.host_id = h.id) AS sessions,
-                (SELECT MAX(updated_at) FROM sessions s WHERE s.host_id = h.id) AS last_activity
+                (SELECT MAX(updated_at) FROM sessions s WHERE s.host_id = h.id) AS last_activity,
+                (SELECT COUNT(*) FROM renter_pins r WHERE r.host_id = h.id) AS has_pin
          FROM hosts h LEFT JOIN accounts a ON a.host_id = h.id
          ORDER BY h.created_at DESC`,
       )
@@ -130,6 +162,26 @@ export const admin = {
   },
   setPin(hostId: string, pinHash: string, salt: string): boolean {
     return db.prepare('UPDATE accounts SET pin_hash = ?, pin_salt = ? WHERE host_id = ?').run(pinHash, salt, hostId).changes > 0;
+  },
+  /**
+   * Hapus pengguna beserta seluruh datanya: akun umum (email & PIN), semua sesi yang ia buat
+   * (pemain, ronde, skor) dan token pemain sesi tersebut. Satu transaksi: semua atau tidak sama sekali.
+   */
+  deleteUser(hostId: string): { slugs: string[] } {
+    const rows = db.prepare('SELECT id, slug FROM sessions WHERE host_id = ?').all(hostId) as { id: string; slug: string }[];
+    db.exec('BEGIN');
+    try {
+      for (const r of rows) db.prepare('DELETE FROM player_tokens WHERE session_id = ?').run(r.id);
+      db.prepare('DELETE FROM sessions WHERE host_id = ?').run(hostId);
+      db.prepare('DELETE FROM accounts WHERE host_id = ?').run(hostId);
+      db.prepare('DELETE FROM renter_pins WHERE host_id = ?').run(hostId);
+      db.prepare('DELETE FROM hosts WHERE id = ?').run(hostId);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    return { slugs: rows.map((r) => r.slug) };
   },
   /** Salinan database yang konsisten (aman saat aplikasi berjalan). */
   backupTo(path: string) {

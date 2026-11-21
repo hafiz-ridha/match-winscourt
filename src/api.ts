@@ -95,6 +95,8 @@ export interface Me {
   host: { name: string; phone: string; email?: string | null };
   /** Host punya akun umum (boleh membuat sesi manual). */
   account?: boolean;
+  /** Penyewa Wins Court sudah membuat PIN login cepat. */
+  renterPin?: boolean;
   bookings: Booking[];
   sessions: SessionSummary[];
 }
@@ -104,6 +106,8 @@ export type Role = 'host' | 'referee' | 'player' | 'viewer';
 export const api = {
   config: () => req<{ mock: boolean; mockAccounts: { name: string; phone: string; note: string }[] }>('/config'),
   login: (name: string, phone: string) => req<{ token: string } & Omit<Me, 'sessions'>>('/auth/login', { method: 'POST', body: { name, phone } }),
+  renterPinLogin: (phone: string, pin: string) => req<{ token: string } & Omit<Me, 'sessions'>>('/auth/renter-pin-login', { method: 'POST', body: { phone, pin } }),
+  setRenterPin: (pin: string) => req<{ ok: boolean }>('/auth/renter-pin', { method: 'POST', body: { pin } }),
   register: (body: { name: string; email: string; phone: string; pin: string }) => req<{ token: string }>('/auth/register', { method: 'POST', body }),
   accountLogin: (id: string, pin: string) => req<{ token: string }>('/auth/account-login', { method: 'POST', body: { id, pin } }),
   me: () => req<Me>('/me'),

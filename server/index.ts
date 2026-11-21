@@ -6,9 +6,9 @@ import { courtLabels, defaultRules, defaultSettings, formatInfo, MANUAL_RETENTIO
 import type { Booking, FormatId, Gender, Level, Session } from '../shared/types.ts';
 import { maskPhone, normalizeName, normalizePhone, uid } from '../shared/util.ts';
 import { applyAction, cleanName, HttpError, newPlayer, type Role } from './actions.ts';
-import { accounts, hostById, hosts, playerTokens, sessions, type Host } from './db.ts';
+import { accounts, hostById, hosts, playerTokens, sessions, type Host, renterPins } from './db.ts';
 import { findBookings, isMock, MOCK_ACCOUNTS } from './winscourt.ts';
-import { adminRouter } from './admin.ts';
+import { adminHooks, adminRouter } from './admin.ts';
 import { emailDomainVerdict } from './mailcheck.ts';
 import { emailDomain, emailIssue, phoneIssue } from '../shared/contact.ts';
 import { modelsRouter } from './models.ts';
@@ -173,6 +173,44 @@ api.post('/auth/login', async (req, res) => {
   res.json({ token: host.token, host: { name: host.name, phone: maskPhone(phone) }, bookings });
 });
 
+/* ---------- penyewa Wins Court: PIN login cepat (no. HP + PIN) ---------- */
+
+/**
+ * Penyewa yang sudah pernah masuk (nama + no. HP terverifikasi di jadwal Wins Court) bisa membuat
+ * PIN 6 digit. Login berikutnya cukup no. HP + PIN; jadwal tetap diambil dari Wins Court memakai
+ * nama & no. HP yang tersimpan, jadi booking baru langsung muncul.
+ */
+api.post('/auth/renter-pin', (req, res) => {
+  const host = requireHost(req);
+  if (accounts.byHost(host.id)) throw new HttpError(400, 'Akun umum sudah memakai PIN akun. Gunakan PIN tersebut untuk masuk.');
+  const pin = String(req.body?.pin ?? '');
+  if (!/^\d{6}$/.test(pin)) throw new HttpError(400, 'PIN harus 6 angka');
+  if (weakPin(pin)) throw new HttpError(400, 'PIN terlalu mudah ditebak. Hindari angka sama atau berurutan.');
+  const salt = randomBytes(16).toString('hex');
+  renterPins.set(host.id, hashPin(pin, salt), salt);
+  res.json({ ok: true });
+});
+
+api.post('/auth/renter-pin-login', async (req, res) => {
+  const phone = normalizePhone(String(req.body?.phone ?? ''));
+  const pin = String(req.body?.pin ?? '');
+  if (phone.length < 9 || !/^\d{6}$/.test(pin)) throw new HttpError(400, 'Isi no. HP dan PIN 6 angka');
+  const key = `rpin:${phone}`;
+  rateLimit(key);
+  const host = hosts.byPhone(phone);
+  const rp = host ? renterPins.byHost(host.id) : undefined;
+  // Pesan sama untuk no. HP tanpa PIN & PIN salah (tidak membocorkan siapa yang terdaftar).
+  if (!host || !rp || !pinOk(pin, rp.pin_salt, rp.pin_hash)) throw new HttpError(401, 'No. HP atau PIN salah. Belum punya PIN? Masuk dengan nama & no. HP.');
+  attempts.delete(key);
+  let bookings: Booking[] = [];
+  try {
+    bookings = await findBookings(host.name, host.phone);
+  } catch {
+    /* Wins Court tidak bisa dihubungi: tetap boleh masuk, jadwal dimuat ulang di beranda */
+  }
+  res.json({ token: host.token, host: { name: host.name, phone: maskPhone(phone) }, bookings });
+});
+
 /* ---------- akun umum: nama + email + no. HP + PIN 6 digit ---------- */
 
 
@@ -256,7 +294,7 @@ api.get('/me', async (req, res) => {
     players: s.players.filter((p) => p.status !== 'waitlist' && p.status !== 'left').length,
     waitlist: s.players.filter((p) => p.status === 'waitlist').length,
   }));
-  res.json({ host: accountJson(host, acc?.email ?? null), account: !!acc, bookings, sessions: list });
+  res.json({ host: accountJson(host, acc?.email ?? null), account: !!acc, renterPin: !acc && !!renterPins.byHost(host.id), bookings, sessions: list });
 });
 
 /** Sesi manual (akun umum): olahraga, tanggal, jam & jumlah lapangan diisi sendiri, tanpa booking Wins Court. */
@@ -423,6 +461,12 @@ api.delete('/s/:slug', (req, res) => {
   res.json({ ok: true });
 });
 
+adminHooks.sessionsRemoved = (slugs) => {
+  for (const slug of slugs) {
+    for (const r of streams.get(slug) ?? []) r.end();
+    streams.delete(slug);
+  }
+};
 app.use('/api/admin', adminRouter);
 app.use('/api', api);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Tidak ditemukan' }));
